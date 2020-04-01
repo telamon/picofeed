@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright © 2020 Tony Ivanov <telamohn@pm.me>
+//
+// Heads up. 2.0 is going to be redesigned.
+// I botched up the tip marker accidentally and it currently
+// indicates multiple things.
 const sodium = require('sodium-universal')
 const codecs = require('codecs')
 class PicoFeed {
@@ -55,12 +59,21 @@ class PicoFeed {
     // pickling process for key-statements encodeUri(pickle + base64(key))
     // TODO: resize buffer if needed
     if (!this.tip) {
-      console.log('Setting identity key', data.hexSlice())
+      // console.info('Assuming identity key', data.hexSlice())
       this.key = data // Set frist key if missing
     }
 
-    this.tip += PicoFeed.KEY.copy(this.buf)
+    const dst = !this.tip || this._isKeyAtTip ? this.tip
+      : PicoFeed.dstructBlock(this.buf, this.tip).end
+
+    this.tip += PicoFeed.KEY.copy(this.buf, dst)
     this.tip += data.copy(this.buf, this.tip)
+  }
+  // THERE IS NEVER A KEY AT THE TIP; ONLY EMPTY SPACE OR A BLOCK
+  // FUCK THIS: WE're REFACTORING into this.tail and this.lastBlock
+  get _isKeyAtTip () {
+    return this.buf.subarray(this.tip, this.tip + PicoFeed.KEY.length)
+      .equals(PicoFeed.KEY)
   }
 
   // This does not work as intended, should be + dstructBlock(this.tip).size .
@@ -123,10 +136,23 @@ class PicoFeed {
     return mapper
   }
 
-  append (data, sk, cb) {
-    if (typeof sk === 'function') return this.append(data, null, sk)
-    if (!this.secretKey && !sk) throw new Error('Not Author nor Guest, feed READONLY cannot append')
+  _ensureKey (pk) {
+    for (const k of this.keys) {
+      if (pk.equals(k)) return
+    }
+    this.appendKey(pk)
+  }
+
+  append (data, signWith, cb) {
+    if (typeof signWith === 'function') return this.append(data, null, signWith)
+    const sk = signWith || this.secretKey
+    if (!sk) throw new Error('Not Author nor Guest, feed READONLY cannot append')
+    if (sk.length !== 64) throw new Error('Unknown signature sekret key format')
+    const pk = sk.slice(32) // this is a libsodium thing
+    this._ensureKey(pk)
+
     const metaSz = PicoFeed.META_SIZE
+
     const current = PicoFeed.dstructBlock(this.buf, this.tip)
     // TODO: for 2.0 redesign the tip ptr, right now it points to
     // next "empty" space if the previous space is occupied by a key,
@@ -135,8 +161,9 @@ class PicoFeed {
     // *ugh* after a key segment might be a block..
 
     // For empty feeds: nextTip = currentTip
-    const nextTip = this.length ? this.tip + current.end : this.tip
-
+    const nextTip = !this.length || this._isKeyAtTip ? this.tip
+      : this.tip + current.end
+    debugger
     const encodedMessage = this.encoding.encode(data)
     const dN = encodedMessage.length // this.encoding.encodingLength(data)
     const newEnd = nextTip + dN + metaSz
@@ -256,6 +283,7 @@ class PicoFeed {
     let kM = 0
     let bM = 0
     let type = -1
+    let prevType = 0
     let start = -1
     const processChunk = () => {
       if (type !== -1) {
@@ -263,10 +291,14 @@ class PicoFeed {
         if (!type) { // Unpack Public Sign Key
           const key = Buffer.from(chunk, 'base64')
           if (key.length !== 32) throw new Error('PSIG key wrong size: ')
-          this.appendKey(key)
+          this.appendKey(key) // modifies tip
         } else { // Unpack Block
-          this.tip += Buffer.from(chunk, 'base64').copy(this.buf, this.tip)
+          const dst = !prevType ? this.tip
+            : PicoFeed.dstructBlock(this.buf, this.tip).end
+          Buffer.from(chunk, 'base64').copy(this.buf, dst)
+          this.tip = dst
         }
+        prevType = type
         type = -1 // for sanity, not needed.
       }
       start = o + 1
@@ -303,9 +335,25 @@ class PicoFeed {
       if (type && !--idx) {
         this.tip = block.start
         break
-      }
+      } else if (idx < 0) break
     }
     return o !== this.tip
+  }
+
+  get keys () {
+    const itr = this._index()
+    function * filter () {
+      for (const { type, key } of itr) if (!type) yield key
+    }
+    return filter()
+  }
+
+  get blocks () {
+    const itr = this._index()
+    function * filter () {
+      for (const { type, block } of itr) if (type) yield block
+    }
+    return filter()
   }
 }
 

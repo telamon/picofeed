@@ -28,5 +28,6 @@ test.only('truncation', t => {
   for (const { type, block } of feed._index()) {
     if (type) console.log(block.body.toString())
   }
+
   t.end()
 })
