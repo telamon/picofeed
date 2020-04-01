@@ -23,6 +23,7 @@ class PicoFeed {
     const enc = opts.contentEncoding || 'utf8'
     this.encoding = codecs(enc === 'json' ? 'ndjson' : enc)
     this.secretKey = opts.secretKey || null
+    if (this.secretKey) this.key = this.secretKey.slice(32)
 
     // this.compressor = opts.compressor || defaultCompressor
     // this.compressionEnabled = !opts.disableCompression
@@ -35,11 +36,11 @@ class PicoFeed {
         this.key = Buffer.allocUnsafe(sodium.crypto_sign_PUBLICKEYBYTES)
         sodium.crypto_sign_keypair(this.key, this.secretKey)
       }
-      this.buf = Buffer.allocUnsafe(PicoFeed.INITIAL_FEED_SIZE)
+      this.buf = Buffer.alloc(PicoFeed.INITIAL_FEED_SIZE)
       this.tip = 0
       this.appendKey(this.key)
     } else if (!Buffer.isBuffer(from)) {
-      this.buf = Buffer.allocUnsafe(PicoFeed.INITIAL_FEED_SIZE)
+      this.buf = Buffer.alloc(PicoFeed.INITIAL_FEED_SIZE)
       this.tip = 0
       this._unpack(from)
     } else {
@@ -126,6 +127,11 @@ class PicoFeed {
     if (!this.secretKey && !sk) throw new Error('Not Author nor Guest, feed READONLY cannot append')
     const metaSz = PicoFeed.META_SIZE
     const current = PicoFeed.dstructBlock(this.buf, this.tip)
+    // TODO: for 2.0 redesign the tip ptr, right now it points to
+    // next "empty" space if the previous space is occupied by a key,
+    // OR it points to the start of the last block
+    // if the last record is a block. *facepalm* not very useful.
+    // *ugh* after a key segment might be a block..
 
     // For empty feeds: nextTip = currentTip
     const nextTip = this.length ? this.tip + current.end : this.tip
@@ -179,7 +185,7 @@ class PicoFeed {
     // vars for block parsing
     let prevSig = null
     let blockIdx = 0
-
+    let endDetected = false
     while (true) {
       if (offset + ktok.length > this.buf.length) return
       const isKey = ktok.equals(this.buf.slice(offset, offset + ktok.length))
@@ -187,13 +193,16 @@ class PicoFeed {
         const key = this.buf.slice(offset + ktok.length, offset + ktok.length + KEY_SZ)
         // Assert sanity
         if (!kchain.length && !this.key.equals(key)) throw new Error('first key in feed must equal identity of feed.')
-        yield { type: 0, id: kchain.length, key: key }
+        yield { type: 0, id: kchain.length, key: key, offset }
         kchain.push(key)
         offset += ktok.length + KEY_SZ
       } else {
         const block = PicoFeed.dstructBlock(this.buf, offset)
         // End of buffer
+        if (block.size === 0) return // TODO: use a cork emoji instead?
+        if (this.tip === offset) endDetected = true // refer to 2.0 comment in append()
         if (block.size > this.buf.length + offset) return
+
         // First block should have empty parentSig
         if (!blockIdx && !block.parentSig.equals(Buffer.alloc(64))) return
         // Consequent blocks must state correct parent.
@@ -202,18 +211,19 @@ class PicoFeed {
         for (let i = kchain.length - 1; i >= 0; i--) {
           valid = block.verify(kchain[i])
           if (!valid) continue
-          yield { type: 1, id: blockIdx++, block }
+          yield { type: 1, id: blockIdx++, block, offset }
           prevSig = block.sig
           offset += block.end
         }
         if (!valid) return // chain of trust broken
       }
+      if (endDetected) break
     }
   }
 
   get length () {
     let i = 0
-    // TODO: i'm in a hurry, choosing safety before efficiency.
+    // TODO: i'm in a hurry, choosing convenice before efficiency.
     for (const { type } of this._index()) if (type) i++
     return i
   }
@@ -282,6 +292,16 @@ class PicoFeed {
       if (type && !idx--) return this.encoding.decode(block.body)
     }
     throw new Error('NotFoundError')
+  }
+
+  // TODO: will be rewritten in 2.0
+  truncateAfter (idx) {
+    idx++ // ensure loop runs at least once when idx = 0
+    for (const { type, block } of this._index()) {
+      if (type && !--idx) {
+        this.tip = block.start
+      }
+    }
   }
 }
 
