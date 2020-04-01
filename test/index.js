@@ -7,6 +7,10 @@ test('new feed', t => {
     t.error(err)
     t.equal(seq, 1)
   })
+  t.equal(feed.get(0), 'Hello World')
+
+  t.equal(feed.append('</world>'), 2)
+  t.equal(feed.get(1), '</world>')
   const str = feed.pickle() // # => URLSAFE STRING
   // feed.on('append', (seq, msg) => { debugger })
   // feed.repickle(otherBuffer) // Merge/Comp other buffer/string, causing 'append' event to fire
@@ -15,9 +19,10 @@ test('new feed', t => {
   t.end()
 })
 
-test.only('truncation', t => {
+test('truncation', t => {
   const feed = new BottleFeed()
   t.equal(feed.append('Hello World!'), 1)
+
   t.equal(feed.append('New shoes,'), 2)
   t.equal(feed.append('still good'), 3)
   t.ok(feed.truncateAfter(0), 'truncated')

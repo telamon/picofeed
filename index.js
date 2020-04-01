@@ -19,12 +19,17 @@ class PicoFeed {
   static get COUNTER_SIZE () { return 4 } // Sizeof UInt32BE
   static get META_SIZE () { return PicoFeed.SIGNATURE_SIZE * 2 + PicoFeed.COUNTER_SIZE }
 
+  get tip () { throw new Error('The tip was a lie') }
+
   constructor (from = null, opts = {}) {
     // Assuming we were passed 'options' as first parameter.
     if (from && !(Buffer.isBuffer(from) || typeof from === 'string')) {
       opts = from
       from = null
     }
+    this.tail = 0 // Tail always points to next empty space
+    this._lastBlockOffset = 0 // Ptr to start of last block
+
     const enc = opts.contentEncoding || 'utf8'
     this.encoding = codecs(enc === 'json' ? 'ndjson' : enc)
     this.secretKey = opts.secretKey || null
@@ -42,11 +47,9 @@ class PicoFeed {
         sodium.crypto_sign_keypair(this.key, this.secretKey)
       }
       this.buf = Buffer.alloc(PicoFeed.INITIAL_FEED_SIZE)
-      this.tip = 0
       this.appendKey(this.key)
     } else if (!Buffer.isBuffer(from)) {
       this.buf = Buffer.alloc(PicoFeed.INITIAL_FEED_SIZE)
-      this.tip = 0
       this._unpack(from)
     } else {
       // TODO: assert raw unpacked feed
@@ -58,26 +61,16 @@ class PicoFeed {
     // raw pickle means unencoded key.
     // pickling process for key-statements encodeUri(pickle + base64(key))
     // TODO: resize buffer if needed
-    if (!this.tip) {
+    if (!this.tail) {
       // console.info('Assuming identity key', data.hexSlice())
       this.key = data // Set frist key if missing
     }
-
-    const dst = !this.tip || this._isKeyAtTip ? this.tip
-      : PicoFeed.dstructBlock(this.buf, this.tip).end
-
-    this.tip += PicoFeed.KEY.copy(this.buf, dst)
-    this.tip += data.copy(this.buf, this.tip)
-  }
-  // THERE IS NEVER A KEY AT THE TIP; ONLY EMPTY SPACE OR A BLOCK
-  // FUCK THIS: WE're REFACTORING into this.tail and this.lastBlock
-  get _isKeyAtTip () {
-    return this.buf.subarray(this.tip, this.tip + PicoFeed.KEY.length)
-      .equals(PicoFeed.KEY)
+    this.tail += PicoFeed.KEY.copy(this.buf, this.tail)
+    this.tail += data.copy(this.buf, this.tail)
   }
 
-  // This does not work as intended, should be + dstructBlock(this.tip).size .
-  // get _free () { return this.buf.length - this.tip }
+  get free () { return PicoFeed.MAX_FEED_SIZE - this.tail }
+
   static dstructBlock (buf, start = 0) {
     /**
      * Block layout
@@ -143,6 +136,11 @@ class PicoFeed {
     this.appendKey(pk)
   }
 
+  get lastBlock () {
+    if (!this._lastBlockOffset) return
+    return PicoFeed.dstructBlock(this.buf, this._lastBlockOffset)
+  }
+
   append (data, signWith, cb) {
     if (typeof signWith === 'function') return this.append(data, null, signWith)
     const sk = signWith || this.secretKey
@@ -153,24 +151,15 @@ class PicoFeed {
 
     const metaSz = PicoFeed.META_SIZE
 
-    const current = PicoFeed.dstructBlock(this.buf, this.tip)
-    // TODO: for 2.0 redesign the tip ptr, right now it points to
-    // next "empty" space if the previous space is occupied by a key,
-    // OR it points to the start of the last block
-    // if the last record is a block. *facepalm* not very useful.
-    // *ugh* after a key segment might be a block..
+    const pBlock = this.lastBlock
 
-    // For empty feeds: nextTip = currentTip
-    const nextTip = !this.length || this._isKeyAtTip ? this.tip
-      : this.tip + current.end
-    debugger
     const encodedMessage = this.encoding.encode(data)
     const dN = encodedMessage.length // this.encoding.encodingLength(data)
-    const newEnd = nextTip + dN + metaSz
+    const newEnd = this.tail + dN + metaSz
 
     // Ensure we're not gonna pass the boundary
     if (PicoFeed.MAX_FEED_SIZE < newEnd) {
-      console.error('NOFIT', nextTip, dN, metaSz)
+      console.error('NOFIT', this.tail, dN, metaSz)
       throw new Error('MAX_FEED_SIZE reached, block won\'t fit:' + newEnd)
     }
 
@@ -182,7 +171,14 @@ class PicoFeed {
       this.buf = nbuf
     }
 
-    const map = PicoFeed.dstructBlock(this.buf, nextTip)
+    const map = PicoFeed.dstructBlock(this.buf, this.tail)
+    // Debug
+    // map.header.fill('H')
+    // map.size = dN
+    // map.body.fill('B')
+    // map.sig.fill('S')
+    // map.parentSig.fill('P')
+
     map.header.fill(0) // Zero out the header
     map.size = dN
 
@@ -191,14 +187,16 @@ class PicoFeed {
     // this.encoding.encode(data, map.body)
     encodedMessage.copy(map.body)
 
-    if (this.length) { // Origin blocks are origins.
-      current.sig.copy(map.parentSig)
+    if (pBlock) { // Origin blocks are origins.
+      pBlock.sig.copy(map.parentSig)
     }
 
     sodium.crypto_sign_detached(map.sig, map.dat, sk || this.secretKey)
     // If this.secretKey was used we can sanity check.
     if (!sk && !map.verify(this.key)) throw new Error('newly stored block is invalid. something went wrong')
-    this.tip = nextTip
+    this._lastBlockOffset = this.tail
+    this.tail = newEnd
+
     // This method isn't async but we'll honour the old ways
     if (typeof cb === 'function') cb(null, this.length)
     return this.length
@@ -214,8 +212,8 @@ class PicoFeed {
     let prevSig = null
     let blockIdx = 0
     while (true) {
-      // End of explored buffer
-      const eof = offset >= this.tip
+      if (offset >= this.tail) return
+
       if (offset + ktok.length > this.buf.length) return
       const isKey = ktok.equals(this.buf.slice(offset, offset + ktok.length))
 
@@ -228,12 +226,12 @@ class PicoFeed {
         offset += ktok.length + KEY_SZ
       } else {
         const block = PicoFeed.dstructBlock(this.buf, offset)
-
         if (block.size === 0) return // TODO: use a cork emoji instead?
-        if (block.size > this.buf.length + offset) return
+        if (offset + block.size > this.buf.length) return
 
         // First block should have empty parentSig
         if (!blockIdx && !block.parentSig.equals(Buffer.alloc(64))) return
+
         // Consequent blocks must state correct parent.
         if (blockIdx && !prevSig.equals(block.parentSig)) return
         let valid = false
@@ -242,11 +240,11 @@ class PicoFeed {
           if (!valid) continue
           yield { type: 1, id: blockIdx++, block, offset }
           prevSig = block.sig
-          offset += block.end
+          offset = block.end
+          break
         }
         if (!valid) return // chain of trust broken
       }
-      if (eof) break
     }
   }
 
@@ -283,7 +281,6 @@ class PicoFeed {
     let kM = 0
     let bM = 0
     let type = -1
-    let prevType = 0
     let start = -1
     const processChunk = () => {
       if (type !== -1) {
@@ -291,14 +288,11 @@ class PicoFeed {
         if (!type) { // Unpack Public Sign Key
           const key = Buffer.from(chunk, 'base64')
           if (key.length !== 32) throw new Error('PSIG key wrong size: ')
-          this.appendKey(key) // modifies tip
+          this.appendKey(key) // modifies tail
         } else { // Unpack Block
-          const dst = !prevType ? this.tip
-            : PicoFeed.dstructBlock(this.buf, this.tip).end
-          Buffer.from(chunk, 'base64').copy(this.buf, dst)
-          this.tip = dst
+          this._lastBlockOffset = this.tail
+          this.tail += Buffer.from(chunk, 'base64').copy(this.buf, this.tail)
         }
-        prevType = type
         type = -1 // for sanity, not needed.
       }
       start = o + 1
@@ -329,15 +323,16 @@ class PicoFeed {
 
   // @deprecated will be rewritten in 2.0
   truncateAfter (idx) {
-    const o = this.tip
+    const o = this.tail
     idx++ // ensure loop runs at least once when idx = 0
     for (const { type, block } of this._index()) {
       if (type && !--idx) {
-        this.tip = block.start
+        this.tail = block.end
+        this._lastBlockOffset = block.start
         break
       } else if (idx < 0) break
     }
-    return o !== this.tip
+    return o !== this.tail
   }
 
   get keys () {
