@@ -12,16 +12,21 @@ test('new feed', t => {
   // feed.repickle(otherBuffer) // Merge/Comp other buffer/string, causing 'append' event to fire
   const f2 = new BottleFeed(str)
   t.equal(f2.get(0), 'Hello World')
+  t.end()
+})
 
-  // truncation
+test.only('truncation', t => {
+  const feed = new BottleFeed()
+  t.equal(feed.append('Hello World!'), 1)
   t.equal(feed.append('New shoes,'), 2)
   t.equal(feed.append('still good'), 3)
-  feed.truncateAfter(1)
-  t.equal(feed.append('are comfty'), 3)
+  t.ok(feed.truncateAfter(0), 'truncated')
+  t.equal(feed.length, 1, 'new length')
+  t.equal(feed.append('are comfty'), 2)
+
   // Todo: feed#blocks and feed#list() => [bdy, bdy, bdy]
   for (const { type, block } of feed._index()) {
     if (type) console.log(block.body.toString())
   }
   t.end()
 })
-

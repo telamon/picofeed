@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright © 2020 Tony Ivanov <telamohn@pm.me>
 const sodium = require('sodium-universal')
 const codecs = require('codecs')
 class PicoFeed {
@@ -185,10 +186,12 @@ class PicoFeed {
     // vars for block parsing
     let prevSig = null
     let blockIdx = 0
-    let endDetected = false
     while (true) {
+      // End of explored buffer
+      const eof = offset >= this.tip
       if (offset + ktok.length > this.buf.length) return
       const isKey = ktok.equals(this.buf.slice(offset, offset + ktok.length))
+
       if (isKey) {
         const key = this.buf.slice(offset + ktok.length, offset + ktok.length + KEY_SZ)
         // Assert sanity
@@ -198,9 +201,8 @@ class PicoFeed {
         offset += ktok.length + KEY_SZ
       } else {
         const block = PicoFeed.dstructBlock(this.buf, offset)
-        // End of buffer
+
         if (block.size === 0) return // TODO: use a cork emoji instead?
-        if (this.tip === offset) endDetected = true // refer to 2.0 comment in append()
         if (block.size > this.buf.length + offset) return
 
         // First block should have empty parentSig
@@ -217,13 +219,12 @@ class PicoFeed {
         }
         if (!valid) return // chain of trust broken
       }
-      if (endDetected) break
+      if (eof) break
     }
   }
 
   get length () {
     let i = 0
-    // TODO: i'm in a hurry, choosing convenice before efficiency.
     for (const { type } of this._index()) if (type) i++
     return i
   }
@@ -294,14 +295,17 @@ class PicoFeed {
     throw new Error('NotFoundError')
   }
 
-  // TODO: will be rewritten in 2.0
+  // @deprecated will be rewritten in 2.0
   truncateAfter (idx) {
+    const o = this.tip
     idx++ // ensure loop runs at least once when idx = 0
     for (const { type, block } of this._index()) {
       if (type && !--idx) {
         this.tip = block.start
+        break
       }
     }
+    return o !== this.tip
   }
 }
 
