@@ -5,19 +5,26 @@
 
 > A small cryptographically Secure Feed occupying a single buffer
 
-```ad
-HELP WANTED!
 
-If you're reading this it means that the docs are missing or sub par.
+```ad
+ _____                      _   _           _
+|  __ \   Help Wanted!     | | | |         | |
+| |  | | ___  ___ ___ _ __ | |_| |     __ _| |__  ___   ___  ___
+| |  | |/ _ \/ __/ _ \ '_ \| __| |    / _` | '_ \/ __| / __|/ _ \
+| |__| |  __/ (_|  __/ | | | |_| |___| (_| | |_) \__ \_\__ \  __/
+|_____/ \___|\___\___|_| |_|\__|______\__,_|_.__/|___(_)___/\___|
+
+If you're reading this it means that the docs are missing or in a bad state.
+
 My research is generating code at a higher rate than documentation and
 I'm personally drowning in small administrational todos.
 Thus you have my sincere apologies.
 
 If you have any questions, [PLEASE OPEN AN ISSUE](./issues) -
-it will hopefully save time for both of us.
+I'll do my best to gingerly provide an answer.
 
 I publish all of my work as Libre software and will continue to do so,
-please drop me a penny at [Patreon]() and fund this project.
+please [drop me a penny at Patreon](https://www.patreon.com/decentlabs) and help fund repositories like theese.
 ```
 
 ## <a name="install"></a> Install
