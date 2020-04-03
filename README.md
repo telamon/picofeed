@@ -24,7 +24,8 @@ If you have any questions, [PLEASE OPEN AN ISSUE](./issues) -
 I'll do my best to gingerly provide an answer.
 
 I publish all of my work as Libre software and will continue to do so,
-please [drop me a penny at Patreon](https://www.patreon.com/decentlabs) and help fund repositories like theese.
+please [drop me a penny at Patreon](https://www.patreon.com/decentlabs)
+and help fund repositories like theese.
 ```
 
 ## <a name="install"></a> Install
