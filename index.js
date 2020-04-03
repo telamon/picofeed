@@ -10,7 +10,7 @@ class PicoFeed {
   static get MAX_FEED_SIZE () { return 64 << 10 } // 64 kilo byte
   static get INITIAL_FEED_SIZE () { return 1 << 10 } // 1 kilo byte
   static get PICKLE () { return Buffer.from('🥒', 'utf8') }
-  static get KEY () { return Buffer.from('🗝️', 'utf8') }
+  static get KEY () { return Buffer.from('f09f979d', 'hex') }
   // consensus? pft! whoever can fit the most kittens into
   // a single bottle is obviously the winner.
   static get BLOCK () { return Buffer.from('🐈', 'utf8') }
@@ -276,7 +276,7 @@ class PicoFeed {
     const pToken = encodeURI(PicoFeed.PICKLE)
     const kToken = encodeURI(PicoFeed.KEY) // 21 wasted bytes on emoji..
     const bToken = encodeURI(PicoFeed.BLOCK)
-    if (!str.startsWith(pToken)) throw new Error('This is not a pickle')
+    if (!str.startsWith(pToken)) throw new Error('NotPickleError')
     let o = pToken.length
     let kM = 0
     let bM = 0
