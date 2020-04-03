@@ -1,7 +1,7 @@
 {
   "name": "picofeed",
   "version": "0.0.1",
-  "description": "placeholder",
+  "description": " Microscopic Secure Feed occupying a single buffer",
   "main": "index.js",
   "files": [
     "lib",
