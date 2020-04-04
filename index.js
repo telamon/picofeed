@@ -9,11 +9,11 @@ const codecs = require('codecs')
 class PicoFeed {
   static get MAX_FEED_SIZE () { return 64 << 10 } // 64 kilo byte
   static get INITIAL_FEED_SIZE () { return 1 << 10 } // 1 kilo byte
-  static get PICKLE () { return Buffer.from('🥒', 'utf8') }
-  static get KEY () { return Buffer.from('f09f979d', 'hex') }
+  static get PICKLE () { return Buffer.from('PIC0FD') } // Buffer.from('🥒', 'utf8') }
+  static get KEY () { return Buffer.from('SPKEY') } // Buffer.from('f09f979d', 'hex') }
   // consensus? pft! whoever can fit the most kittens into
   // a single bottle is obviously the winner.
-  static get BLOCK () { return Buffer.from('🐈', 'utf8') }
+  static get BLOCK () { return Buffer.from('BLOCK') } // Buffer.from('🐈', 'utf8') }
 
   static get SIGNATURE_SIZE () { return sodium.crypto_sign_BYTES }
   static get COUNTER_SIZE () { return 4 } // Sizeof UInt32BE
