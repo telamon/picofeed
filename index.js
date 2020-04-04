@@ -123,7 +123,7 @@ class PicoFeed {
           .crypto_sign_verify_detached(mapper.sig, mapper.dat, pk)
       },
       pack () {
-        return buf.subarray(start, mapper.safeEnd).toString('base64')
+        return buf.subarray(start, mapper.safeEnd).toString('base64').replace(/=+$/, '')
       }
     }
     return mapper
@@ -261,8 +261,8 @@ class PicoFeed {
     const kToken = encodeURI(PicoFeed.KEY)
     const bToken = encodeURI(PicoFeed.BLOCK)
     for (const fact of this._index()) {
-      str += !fact.type ? kToken + fact.key.toString('base64')
-        : bToken + fact.block.pack()
+      str += !fact.type ? kToken + encodeURIComponent(fact.key.toString('base64').replace(/=+$/, ''))
+        : bToken + encodeURIComponent(fact.block.pack())
     }
     return str
   }
@@ -284,7 +284,7 @@ class PicoFeed {
     let start = -1
     const processChunk = () => {
       if (type !== -1) {
-        const chunk = str.substr(start, o - start - bM - kM + 1)
+        const chunk = decodeURIComponent(str.substr(start, o - start - bM - kM + 1))
         if (!type) { // Unpack Public Sign Key
           const key = Buffer.from(chunk, 'base64')
           if (key.length !== 32) throw new Error('PSIG key wrong size: ')
