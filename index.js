@@ -1,21 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright © 2020 Tony Ivanov <telamohn@pm.me>
-//
-// Heads up. 2.0 is going to be redesigned.
-// I botched up the tip marker accidentally and it currently
-// indicates multiple things.
-const sodium = require('sodium-universal')
+
+/* eslint-disable camelcase */
+const {
+  crypto_sign_BYTES,
+  crypto_sign_SECRETKEYBYTES,
+  crypto_sign_PUBLICKEYBYTES,
+  crypto_sign_detached,
+  crypto_sign_verify_detached,
+  crypto_sign_keypair
+} = require('sodium-universal')
+/* eslint-enable camelcase */
+
 const codecs = require('codecs')
-class PicoFeed {
+
+module.exports = class PicoFeed {
   static get MAX_FEED_SIZE () { return 64 << 10 } // 64 kilo byte
   static get INITIAL_FEED_SIZE () { return 1 << 10 } // 1 kilo byte
   static get PICKLE () { return Buffer.from('PIC0FD') } // Buffer.from('🥒', 'utf8') }
-  static get KEY () { return Buffer.from('SPKEY') } // Buffer.from('f09f979d', 'hex') }
+  static get KEY () { return Buffer.from('SPK0') } // Buffer.from('f09f979d', 'hex') }
   // consensus? pft! whoever can fit the most kittens into
   // a single bottle is obviously the winner.
-  static get BLOCK () { return Buffer.from('BLOCK') } // Buffer.from('🐈', 'utf8') }
-
-  static get SIGNATURE_SIZE () { return sodium.crypto_sign_BYTES }
+  static get BLOCK () { return Buffer.from('BLK0') } // Buffer.from('🐈', 'utf8') }
+  static get SIGNATURE_SIZE () { return crypto_sign_BYTES } // eslint-disable-line camelcase
   static get COUNTER_SIZE () { return 4 } // Sizeof UInt32BE
   static get META_SIZE () { return PicoFeed.SIGNATURE_SIZE * 2 + PicoFeed.COUNTER_SIZE }
 
@@ -42,9 +49,9 @@ class PicoFeed {
     // generating a new feed.
     if (!from) {
       if (!this.key) {
-        this.secretKey = Buffer.allocUnsafe(sodium.crypto_sign_SECRETKEYBYTES)
-        this.key = Buffer.allocUnsafe(sodium.crypto_sign_PUBLICKEYBYTES)
-        sodium.crypto_sign_keypair(this.key, this.secretKey)
+        this.secretKey = Buffer.allocUnsafe(crypto_sign_SECRETKEYBYTES)
+        this.key = Buffer.allocUnsafe(crypto_sign_PUBLICKEYBYTES)
+        crypto_sign_keypair(this.key, this.secretKey)
       }
       this.buf = Buffer.alloc(PicoFeed.INITIAL_FEED_SIZE)
       this.appendKey(this.key)
@@ -112,19 +119,16 @@ class PicoFeed {
         const s = mapper.size
         if (s < 1) throw new Error('Invalid blob size: ' + s)
         const end = start + SIG_N + HDR_N + s
-        if (end >= buf.length) throw new Error('Incomplete or invalid block: end overflows buffer length' + end)
+        if (end > buf.length) throw new Error('Incomplete or invalid block: end overflows buffer length' + end)
         return end
       },
       // get _unsafeNext () { return PicoFeed.dstructBlock(buf, mapper.end) },
       get next () { return PicoFeed.dstructBlock(buf, mapper.safeEnd) },
 
       verify (pk) {
-        return sodium
-          .crypto_sign_verify_detached(mapper.sig, mapper.dat, pk)
+        return crypto_sign_verify_detached(mapper.sig, mapper.dat, pk)
       },
-      pack () {
-        return buf.subarray(start, mapper.safeEnd).toString('base64').replace(/=+$/, '')
-      }
+      get buffer () { return buf.subarray(start, mapper.safeEnd) }
     }
     return mapper
   }
@@ -191,7 +195,7 @@ class PicoFeed {
       pBlock.sig.copy(map.parentSig)
     }
 
-    sodium.crypto_sign_detached(map.sig, map.dat, sk || this.secretKey)
+    crypto_sign_detached(map.sig, map.dat, sk || this.secretKey)
     // If this.secretKey was used we can sanity check.
     if (!sk && !map.verify(this.key)) throw new Error('newly stored block is invalid. something went wrong')
     this._lastBlockOffset = this.tail
@@ -257,14 +261,16 @@ class PicoFeed {
   toString () { return this.pickle() }
 
   pickle () {
-    let str = encodeURI(PicoFeed.PICKLE)
-    const kToken = encodeURI(PicoFeed.KEY)
-    const bToken = encodeURI(PicoFeed.BLOCK)
+    let str = ''
+    const kToken = PicoFeed.KEY
+    const bToken = PicoFeed.BLOCK
+
     for (const fact of this._index()) {
-      str += !fact.type ? kToken + encodeURIComponent(fact.key.toString('base64').replace(/=+$/, ''))
-        : bToken + encodeURIComponent(fact.block.pack())
+      str += !fact.type ? kToken + fact.key.toString('base64').replace(/=+$/, '')
+        : bToken + fact.block.buffer.toString('base64').replace(/=+$/, '')
     }
-    return str
+
+    return encodeURIComponent(PicoFeed.PICKLE + str)
   }
 
   // Unpickle
@@ -351,5 +357,3 @@ class PicoFeed {
     return filter()
   }
 }
-
-if (module) module.exports = PicoFeed

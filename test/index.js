@@ -36,3 +36,22 @@ test('truncation', t => {
 
   t.end()
 })
+
+// Don't compress the keys, cause we wanna be able to
+// quickly scan through links without unpacking them.
+// So that means compression is out of scope for PicoFeed
+// cause we could just use a compressing codec wrapper to
+// achieve block compression. Leaving this here for future references
+test.skip('compression', t => {
+  const c = require('compressjs')
+  const feed = new BottleFeed()
+  feed.append('Hello World')
+  const str = feed.pickle()
+  Object.keys(c)
+    .filter(i => i.compressFile)
+    .forEach(alg => {
+      const comp = c[alg].compressFile(str)
+      console.log(alg, comp.length / str.length)
+    })
+  console.log(str)
+})
