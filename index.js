@@ -17,11 +17,11 @@ const codecs = require('codecs')
 module.exports = class PicoFeed {
   static get MAX_FEED_SIZE () { return 64 << 10 } // 64 kilo byte
   static get INITIAL_FEED_SIZE () { return 1 << 10 } // 1 kilo byte
-  static get PICKLE () { return Buffer.from('PIC0FD') } // Buffer.from('🥒', 'utf8') }
-  static get KEY () { return Buffer.from('SPK0') } // Buffer.from('f09f979d', 'hex') }
+  static get PICKLE () { return Buffer.from('PIC0.') } // Buffer.from('🥒', 'utf8') }
+  static get KEY () { return Buffer.from('K0.') } // Buffer.from('f09f979d', 'hex') }
   // consensus? pft! whoever can fit the most kittens into
   // a single bottle is obviously the winner.
-  static get BLOCK () { return Buffer.from('BLK0') } // Buffer.from('🐈', 'utf8') }
+  static get BLOCK () { return Buffer.from('B0.') } // Buffer.from('🐈', 'utf8') }
   static get SIGNATURE_SIZE () { return crypto_sign_BYTES } // eslint-disable-line camelcase
   static get COUNTER_SIZE () { return 4 } // Sizeof UInt32BE
   static get META_SIZE () { return PicoFeed.SIGNATURE_SIZE * 2 + PicoFeed.COUNTER_SIZE }
@@ -261,16 +261,14 @@ module.exports = class PicoFeed {
   toString () { return this.pickle() }
 
   pickle () {
-    let str = ''
+    let str = encodeURIComponent(PicoFeed.PICKLE.toString('utf8'))
     const kToken = PicoFeed.KEY
     const bToken = PicoFeed.BLOCK
-
     for (const fact of this._index()) {
-      str += !fact.type ? kToken + fact.key.toString('base64').replace(/=+$/, '')
-        : bToken + fact.block.buffer.toString('base64').replace(/=+$/, '')
+      str += !fact.type ? kToken + b2ub(fact.key)
+        : bToken + b2ub(fact.block.buffer)
     }
-
-    return encodeURIComponent(PicoFeed.PICKLE + str)
+    return str
   }
 
   // Unpickle
@@ -292,12 +290,12 @@ module.exports = class PicoFeed {
       if (type !== -1) {
         const chunk = decodeURIComponent(str.substr(start, o - start - bM - kM + 1))
         if (!type) { // Unpack Public Sign Key
-          const key = Buffer.from(chunk, 'base64')
+          const key = ub2b(chunk)
           if (key.length !== 32) throw new Error('PSIG key wrong size: ')
           this.appendKey(key) // modifies tail
         } else { // Unpack Block
           this._lastBlockOffset = this.tail
-          this.tail += Buffer.from(chunk, 'base64').copy(this.buf, this.tail)
+          this.tail += ub2b(chunk).copy(this.buf, this.tail)
         }
         type = -1 // for sanity, not needed.
       }
@@ -356,4 +354,14 @@ module.exports = class PicoFeed {
     }
     return filter()
   }
+}
+// Url compatible b64
+function b2ub (b) {
+  return b.toString('base64').replace(/\+/, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+function ub2b (str) {
+  str = (str + '===').slice(0, str.length + (str.length % 4))
+  str = str.replace(/-/g, '+').replace(/_/g, '/')
+  return Buffer.from(str, 'base64')
 }
