@@ -5,6 +5,56 @@
 
 > Microscopic Secure Feed occupying a single buffer
 
+This is a tiny secure blockchain, it's designed to live within an URL.
+
+Looks like major desktop & mobile browsers have support
+for at least 64kilobyte of data after the `#`-component.
+
+Why? URLs are everywhere!
+
+- URLs can be stored on most platforms and channels
+- Sharing urls is easy
+- [No network code](https://xkcd.com/2259/)
+- Browser support via Browserify / node-globals (requires Buffer shim)
+
+now picofeeds can be everywhere too.
+
+## <a name="install"></a> Install
+
+```
+npm install picofeed
+```
+
+## <a name="usage"></a> Usage
+
+```
+const Pico = require('picofeed')
+
+const feed = new Pico()
+console.log(feed.key) // => 32byte, Buffer
+console.log(feed.secretKey) // => 32byte, Buffer
+
+feed.append('Hello') // => 1
+feed.get(0) // => 'Hello'
+
+const url = 'http://myapp.tld/#' + feed.pickle()
+
+// share the url
+
+const remoteFeed = new Pico(url)
+remoteFeed.get(0) // => 'Hello'
+
+const { publicKey, secretKey } = // generate a sodium sign_pair
+
+// Attach a block to feed
+remoteFeed.append('Hey bob!', secretKey)
+
+// second URL containing 2 blocks from 2 different identities.
+const url2 = 'http://myapp.tld/#' + remoteFeed.pickle()
+
+```
+
+## Ad
 
 ```ad
  _____                      _   _           _
@@ -16,31 +66,21 @@
 
 If you're reading this it means that the docs are missing or in a bad state.
 
-My research is generating code at a higher rate than documentation and
-I'm personally drowning in small administrational todos.
-Thus you have my sincere apologies.
+My research is generating code at a higher rate than documentation,
+thus you have my sincere apologies.
 
-If you have any questions, [PLEASE OPEN AN ISSUE](./issues) -
-I'll do my best to gingerly provide an answer.
+If you have any questions, PLEASE OPEN AN ISSUE -
+I'll do my best to happily provide an answer.
 
 I publish all of my work as Libre software and will continue to do so,
-please [drop me a penny at Patreon](https://www.patreon.com/decentlabs)
-and help fund repositories like theese.
+please drop me a penny at Patreon
+and help fund experiments like these.
+
+Patreon: https://www.patreon.com/decentlabs
+Discord: https://discord.gg/K5XjmZx
+Telegram: https://t.me/decentlabs_se
 ```
 
-## <a name="install"></a> Install
-
-```
-npm install picofeed
-```
-
-## <a name="usage"></a> Usage
-
-```
-const feed = new PicoFeed()
-feed.append('Hello') // => 1
-feed.get(0) // => 'Hello'
-```
 
 ## <a name="contribute"></a> Contributing
 
