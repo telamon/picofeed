@@ -37,6 +37,23 @@ test('truncation', t => {
   t.end()
 })
 
+test('empty / truncate to 0', t => {
+  const feed = new BottleFeed()
+  t.equal(feed.append('Hello World!'), 1)
+
+  t.equal(feed.append('New shoes,'), 2)
+  t.equal(feed.append('still good'), 3)
+  t.ok(feed.truncate(0), 'truncated')
+  t.equal(feed.length, 0, 'new length')
+  t.equal(feed.append('are comfty'), 1)
+
+  // Todo: feed#blocks and feed#list() => [bdy, bdy, bdy]
+  for (const { type, block } of feed._index()) {
+    if (type) console.log(block.body.toString())
+  }
+  t.end()
+})
+
 // Don't compress the keys, cause we wanna be able to
 // quickly scan through links without unpacking them.
 // So that means compression is out of scope for PicoFeed

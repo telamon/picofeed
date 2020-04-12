@@ -328,6 +328,7 @@ module.exports = class PicoFeed {
   // @deprecated will be rewritten in 2.0
   truncateAfter (idx) {
     const o = this.tail
+    console.warn('[PicoFeed#truncateAfter()] is deprecated, use truncate() instead')
     idx++ // ensure loop runs at least once when idx = 0
     for (const { type, block } of this._index()) {
       if (type && !--idx) {
@@ -335,6 +336,26 @@ module.exports = class PicoFeed {
         this._lastBlockOffset = block.start
         break
       } else if (idx < 0) break
+    }
+    return o !== this.tail
+  }
+
+  // Truncating is a lot faster
+  // than spawning a new feed.
+  truncate (toLength) {
+    if (toLength === 0) { // Empty the feed
+      this.tail = 0
+      this._lastBlockOffset = 0
+      return true
+    }
+
+    const o = this.tail
+    for (const { type, block } of this._index()) {
+      if (type && !--toLength) {
+        this.tail = block.end
+        this._lastBlockOffset = block.start
+        break
+      } else if (toLength < 0) break
     }
     return o !== this.tail
   }
