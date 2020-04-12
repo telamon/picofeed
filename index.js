@@ -28,55 +28,37 @@ module.exports = class PicoFeed {
 
   get tip () { throw new Error('The tip was a lie') }
 
-  constructor (from = null, opts = {}) {
-    // Assuming we were passed 'options' as first parameter.
-    if (from && !(Buffer.isBuffer(from) || typeof from === 'string')) {
-      opts = from
-      from = null
-    }
+  constructor (opts = {}) {
     this.tail = 0 // Tail always points to next empty space
     this._lastBlockOffset = 0 // Ptr to start of last block
 
     const enc = opts.contentEncoding || 'utf8'
     this.encoding = codecs(enc === 'json' ? 'ndjson' : enc)
 
-    // TODO: remove this option and remove this.key
-    // it's not that useful since 99% of the time different identities
-    // are going to be used for append.
-    this.secretKey = opts.secretKey || null
-    if (this.secretKey) this.key = this.secretKey.slice(32)
-
-    // this.compressor = opts.compressor || defaultCompressor
-    // this.compressionEnabled = !opts.disableCompression
-
-    // No buffer source,
-    // generating a new feed.
-    if (!from) {
-      if (!this.key) {
-        this.secretKey = Buffer.allocUnsafe(crypto_sign_SECRETKEYBYTES)
-        this.key = Buffer.allocUnsafe(crypto_sign_PUBLICKEYBYTES)
-        crypto_sign_keypair(this.key, this.secretKey)
-      }
-      this.buf = Buffer.alloc(PicoFeed.INITIAL_FEED_SIZE)
-      this.appendKey(this.key)
-    } else if (!Buffer.isBuffer(from)) {
-      this.buf = Buffer.alloc(PicoFeed.INITIAL_FEED_SIZE)
-      this._unpack(from)
-    } else {
-      // TODO: assert raw unpacked feed
-      this.buf = from
-    }
+    this.buf = Buffer.alloc(PicoFeed.INITIAL_FEED_SIZE)
   }
 
-  // TODO: make _private
-  appendKey (data) {
-    // TODO: resize buffer if needed
-    if (!this.tail) {
-      // console.info('Assuming identity key', data.hexSlice())
-      this.key = data // Set frist key if missing
+  static signPair () {
+    const sk = Buffer.allocUnsafe(crypto_sign_SECRETKEYBYTES)
+    const pk = Buffer.allocUnsafe(crypto_sign_PUBLICKEYBYTES)
+    crypto_sign_keypair(pk, sk)
+    return { sk, pk }
+  }
+
+  _appendKey (data) {
+    if (this.buf.length < this.tail + PicoFeed.KEY.length + data.length) {
+      throw new Error('// TODO: resize buffer if needed')
     }
     this.tail += PicoFeed.KEY.copy(this.buf, this.tail)
     this.tail += data.copy(this.buf, this.tail)
+  }
+
+  _appendBlock (chunk) {
+    if (this.buf.length < this.tail + chunk.length) {
+      throw new Error('// TODO: resize buffer if needed')
+    }
+    this._lastBlockOffset = this.tail
+    this.tail += chunk.copy(this.buf, this.tail)
   }
 
   get free () { return PicoFeed.MAX_FEED_SIZE - this.tail }
@@ -140,20 +122,18 @@ module.exports = class PicoFeed {
     for (const k of this.keys) {
       if (pk.equals(k)) return
     }
-    this.appendKey(pk)
+    this._appendKey(pk)
   }
+
 
   get lastBlock () {
     if (!this._lastBlockOffset) return
     return PicoFeed.dstructBlock(this.buf, this._lastBlockOffset)
   }
 
-  // TODO: force signWith / secretKey, ignore this.key
-  append (data, signWith, cb) {
-    if (typeof signWith === 'function') return this.append(data, null, signWith)
-    const sk = signWith || this.secretKey
-    if (!sk) throw new Error('Not Author nor Guest, feed READONLY cannot append')
-    if (sk.length !== 64) throw new Error('Unknown signature sekret key format')
+  append (data, sk, cb) {
+    if (!sk) throw new Error('Can\'t append without a signing secret')
+    if (sk.length !== 64) throw new Error('Unknown signature secret key format')
     const pk = sk.slice(32) // this is a libsodium thing
     this._ensureKey(pk)
 
@@ -200,9 +180,9 @@ module.exports = class PicoFeed {
       pBlock.sig.copy(map.parentSig)
     }
 
-    crypto_sign_detached(map.sig, map.dat, sk || this.secretKey)
-    // If this.secretKey was used we can sanity check.
-    if (!sk && !map.verify(this.key)) throw new Error('newly stored block is invalid. something went wrong')
+    crypto_sign_detached(map.sig, map.dat, sk)
+    // sanity check.
+    if (!map.verify(pk)) throw new Error('newly stored block is invalid. something went wrong')
     this._lastBlockOffset = this.tail
     this.tail = newEnd
 
@@ -228,8 +208,6 @@ module.exports = class PicoFeed {
 
       if (isKey) {
         const key = this.buf.slice(offset + ktok.length, offset + ktok.length + KEY_SZ)
-        // Assert sanity
-        if (!kchain.length && !this.key.equals(key)) throw new Error('first key in feed must equal identity of feed.')
         yield { type: 0, id: kchain.length, key: key, offset }
         kchain.push(key)
         offset += ktok.length + KEY_SZ
@@ -297,10 +275,9 @@ module.exports = class PicoFeed {
         if (!type) { // Unpack Public Sign Key
           const key = ub2b(chunk)
           if (key.length !== 32) throw new Error('PSIG key wrong size: ')
-          this.appendKey(key) // modifies tail
+          this._appendKey(key) // modifies tail
         } else { // Unpack Block
-          this._lastBlockOffset = this.tail
-          this.tail += ub2b(chunk).copy(this.buf, this.tail)
+          this._appendBlock(ub2b(chunk))
         }
         type = -1 // for sanity, not needed.
       }
@@ -379,6 +356,94 @@ module.exports = class PicoFeed {
       for (const { type, block } of itr) if (type) yield block
     }
     return filter()
+  }
+
+  merge (source, forceCopy = false, conflictHandler) {
+    if (!source) throw new Error('First argument `source` expected by merge')
+    // If URL; pick the hash
+    // if string pick the string,
+    // if another buffer.. interersting.
+    const sif = PicoFeed.isFeed(source)
+    const other = sif ? source : new PicoFeed()
+
+    // Load string
+    if (!sif && typeof source === 'string') other._unpack(source)
+    // Load URL
+    else if (!sif && typeof source.hash === 'string') other._unpack(source.hash)
+    // Load buffers
+    else if (Buffer.isBuffer(source)) {
+      // Set valid feed buffer
+      if (PicoFeed.PICKLE.equals(source.subarray(0, PicoFeed.PICKLE.length))) {
+        other.buf = source // Careful this is not a copy!
+      } else {
+        // Assume buffer contains output from feed.pickle()
+        other._unpack(source.toString('utf8'))
+      }
+    }
+
+    // If we're empty then we'll just use theirs
+    if (!this.length) {
+      if (forceCopy) {
+        this.buf = Buffer.alloc(other.buf.length)
+        other.buf.copy(this.buf)
+      } else {
+        this.buf = other.buf
+      }
+      this.tail = other.tail
+      this._lastBlockOffset = other._lastBlockOffset
+      return false
+    }
+    let kregA = null
+    let kregB = null
+    let sreg = null
+    let mEof = false
+    const iter = this._index()
+
+    for (const { type, key, block } of other._index()) {
+      if (!type) kregB = key
+
+      if (!mEof) {
+        const { value, done } = iter.next()
+        if (!value.type) kregA = value.key
+        else sreg = value.block.sig
+
+        if (type) {
+          // when merging against premade buffers
+          if (!block.verify(kregB)) {
+            console.warn('merge failed, other feed failed it\'s authenticity')
+            return // Abort merge
+          }
+          // if (!kregA.equals(kregB))
+          // if (!sreg.equals(block.sig))
+          // TODO: detect and handle potential conflict
+
+          // By default, abort on first conflict.
+          if (conflict && (typeof conflictHandler === 'function' ? !conflictHandler() : true)) return
+        }
+
+        mEof = done
+      }
+
+      // merge their block into our buffer
+      if (type) {
+        if (block.verify(kregB)) {
+          this._ensureKey(kregB)
+          this._appendBlock(block.buffer)
+        } else {
+          console.warn('merge failed, other feed failed it\'s authenticity')
+          debugger
+          return // Abort merge
+        }
+      }
+    }
+  }
+
+  static isFeed (other) { return other instanceof PicoFeed }
+
+  static from (source, opts = {}) {
+    const f = new PicoFeed(opts)
+    f.merge(source)
+    return f
   }
 }
 // Url compatible b64
