@@ -39,6 +39,10 @@ module.exports = class PicoFeed {
 
     const enc = opts.contentEncoding || 'utf8'
     this.encoding = codecs(enc === 'json' ? 'ndjson' : enc)
+
+    // TODO: remove this option and remove this.key
+    // it's not that useful since 99% of the time different identities
+    // are going to be used for append.
     this.secretKey = opts.secretKey || null
     if (this.secretKey) this.key = this.secretKey.slice(32)
 
@@ -64,9 +68,8 @@ module.exports = class PicoFeed {
     }
   }
 
+  // TODO: make _private
   appendKey (data) {
-    // raw pickle means unencoded key.
-    // pickling process for key-statements encodeUri(pickle + base64(key))
     // TODO: resize buffer if needed
     if (!this.tail) {
       // console.info('Assuming identity key', data.hexSlice())
@@ -145,6 +148,7 @@ module.exports = class PicoFeed {
     return PicoFeed.dstructBlock(this.buf, this._lastBlockOffset)
   }
 
+  // TODO: force signWith / secretKey, ignore this.key
   append (data, signWith, cb) {
     if (typeof signWith === 'function') return this.append(data, null, signWith)
     const sk = signWith || this.secretKey
