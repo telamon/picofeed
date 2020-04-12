@@ -162,6 +162,7 @@ module.exports = class PicoFeed {
     const pBlock = this.lastBlock
 
     const encodedMessage = this.encoding.encode(data)
+    if (!encodedMessage.length) throw new Error('Encoded data.length is 0')
     const dN = encodedMessage.length // this.encoding.encodingLength(data)
     const newEnd = this.tail + dN + metaSz
 
@@ -174,7 +175,7 @@ module.exports = class PicoFeed {
     // Resize current buffer if needed
     if (this.buf.length < newEnd) {
       console.info('Increasing backing buffer to new size:', newEnd)
-      const nbuf = Buffer.allocUnsafe(newEnd)
+      const nbuf = Buffer.allocUnsafe(newEnd + 32)
       this.buf.copy(nbuf)
       this.buf = nbuf
     }
