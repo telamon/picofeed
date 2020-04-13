@@ -358,26 +358,31 @@ module.exports = class PicoFeed {
     return filter()
   }
 
-  merge (source, forceCopy = false, conflictHandler) {
+  /*
+   * Return values deisgned to be easily passed to feed.get(n) or feed.trunc(n)
+   * for conflict inspection / resolution.
+   * @return {Number} conflicting block index . 0: No common parent, <0: Success, >1: Conflict
+   */
+  merge (source, forceCopy = false) {
     if (!source) throw new Error('First argument `source` expected by merge')
+
     // If URL; pick the hash
     // if string pick the string,
     // if another buffer.. interersting.
     const sif = PicoFeed.isFeed(source)
     const other = sif ? source : new PicoFeed()
-
-    // Load string
-    if (!sif && typeof source === 'string') other._unpack(source)
-    // Load URL
-    else if (!sif && typeof source.hash === 'string') other._unpack(source.hash)
-    // Load buffers
-    else if (Buffer.isBuffer(source)) {
-      // Set valid feed buffer
-      if (PicoFeed.PICKLE.equals(source.subarray(0, PicoFeed.PICKLE.length))) {
-        other.buf = source // Careful this is not a copy!
-      } else {
+    if (!sif) {
+      // Load string
+      if (typeof source === 'string') other._unpack(source)
+      // Load URL
+      else if (typeof source.hash === 'string') other._unpack(source.hash)
+      // Load buffers
+      else if (Buffer.isBuffer(source)) {
         // Assume buffer contains output from feed.pickle()
         other._unpack(source.toString('utf8'))
+
+        // We're not handling raw block buffers because you'd need to provide
+        // the tail and _lastBlockOffset in order to iterate them.
       }
     }
 
@@ -391,11 +396,114 @@ module.exports = class PicoFeed {
       }
       this.tail = other.tail
       this._lastBlockOffset = other._lastBlockOffset
-      return false
+      // TODO: this.validate? or has it been validated already?
+      return true
     }
+
+    /*
+    // returns true / -1
+    A: K0 B0
+    B: K0 B0 B1 B2
+
+    // returns true / -1 (detached/PITA mode)
+    A: K0 B0
+    B: B1 B2 // assuming B1 is signed by K0 and parented to B0
+
+    // returns false / 1, can't merge.
+    A: K0 B0 B1
+    B: K0 B0 B2
+
+    // returns false / 0, can't merge, no common parent.
+    A: K0 B0
+    B: K1 A1
+
+    // return true / -1
+    A: K0 B0 B1
+    B: K0 B0 B1 K1 A2 A3
+
+    // Return false/true // PKs are themselves unordered and unsigned.
+    A: K0 K1 K2 B0
+    B: A0 C0 B1
+    // this should theoretically merge but A's K1 and K2 keys are redundant during transfer.
+    // and could be removed or manipulated by third party. better to stash them within a
+    // block if you want to create a pre-deterimned order and ownership feed.
+
+    */
+
+    // Attempt #3
+    // 1. Find common parent
+    const counters = [-1, -1]
+    const iterators = [this._index(), other._index()]
+    const keys = [] // This should be keyrings
+    const blocks = []
+    const eof = [false, false]
+    const parents = []
+    const step = (chain) => { // until block
+      if (blocks[chain]) parents[chain] = blocks[chain].sig
+      blocks[chain] = null
+      while (!blocks[chain] && !eof[chain]) {
+        const n = iterators[chain].next()
+        eof[chain] = eof[chain] || n.done
+        if (n.done && typeof n.value === 'undefined') break // Iterating an empty list..
+
+        if (!n.value.type) keys[chain] = n.value.key // TODO: conditionally add to keychain if key is trusted.
+        else {
+          counters[chain]++
+          blocks[chain] = n.value.block
+        }
+      }
+    }
+
+    const validateBlock = chain => {
+      if (!blocks[chain].verify(keys[chain])) throw new Error('IntegrityError') // chain failed self-validity
+      if (parents[chain] && !blocks[chain].parentSig.equals(parents[chain])) throw new Error('IntegrityError') // B chain failed consistency
+    }
+
+    // Ok, watch this.
+    const A = 0
+    const B = 1
+    step(B)
+    if (!blocks[B]) return true // No blocks no conflicts
+    validateBlock(B)
+    const target = blocks[B].parentSig // || parents[B]
+    // Find common parent
+    while (!eof[A]) {
+      step(A)
+      if (!blocks[A]) break
+      if (blocks[A].parentSig.equals(target)) break
+    }
+
+    if (!blocks[A]) return counters // No common parent! [a: a.length > 0, b: 0]
+    validateBlock(A)
+    // Check if it's the same block
+    if (!blocks[A].sig.equals(blocks[B].sig)) return counters // Conflicting blocks found.
+
+    // common parent found!
+    // start ziplock stepping while checking validity.
+    while (!(eof[B] || eof[A])) {
+      step(B)
+      if (!blocks[B]) break // Chain B ended without conflicts.
+      validateBlock(B)
+
+      step(A)
+      if (!blocks[A]) break // Chain A ended without conflicts.
+      validateBlock(A)
+
+      // Is it the same block?
+      if (!blocks[A].sig.equals(blocks[B].sig)) return counters // Conflicting blocks found.
+    }
+    debugger
+    return true // Success, B super seeds A or is part of A.
+
+    // Attempt #1
+
+    // Ok other buffer is now initialized and we're not empty.
+    // prepare a set of registers, we're going to lockstep through
+    // both this and other _index() iterator in parallell.
     let kregA = null
     let kregB = null
-    let sreg = null
+    let sregA = Buffer.alloc(PicoFeed.SIGNATURE_SIZE)
+    let sregB = sregA
     let mEof = false
     const iter = this._index()
 
@@ -405,8 +513,10 @@ module.exports = class PicoFeed {
       if (!mEof) {
         const { value, done } = iter.next()
         if (!value.type) kregA = value.key
-        else sreg = value.block.sig
+        else sregA = value.block.sig
 
+        // Ok this is the main merge op, where we assert that existing
+        // data matches remote data.
         if (type) {
           // when merging against premade buffers
           if (!block.verify(kregB)) {
@@ -418,7 +528,14 @@ module.exports = class PicoFeed {
           // TODO: detect and handle potential conflict
 
           // By default, abort on first conflict.
-          if (conflict && (typeof conflictHandler === 'function' ? !conflictHandler() : true)) return
+          debugger
+          if (conflict) {
+            if (!conflictHandler(sregB, sregA)) return
+            else {
+              this.truncate(n) // truncate before sregA and continue
+              mEof = true // truncating invalidates the iterator.
+            }
+          }
         }
 
         mEof = done
@@ -426,11 +543,12 @@ module.exports = class PicoFeed {
 
       // merge their block into our buffer
       if (type) {
-        if (block.verify(kregB)) {
+        if (block.verify(kregB) && sregB.equals(block.parentSig)) {
           this._ensureKey(kregB)
           this._appendBlock(block.buffer)
+          sregB = block.sig
         } else {
-          console.warn('merge failed, other feed failed it\'s authenticity')
+          console.warn('merge failed, other feed failed it\'s authenticity check')
           debugger
           return // Abort merge
         }
