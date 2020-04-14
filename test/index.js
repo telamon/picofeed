@@ -26,7 +26,7 @@ test('truncation', t => {
 
   t.equal(feed.append('New shoes,', sk), 2)
   t.equal(feed.append('still good', sk), 3)
-  t.ok(feed.truncateAfter(0), 'truncated')
+  t.ok(feed.truncate(1), 'truncated')
   t.equal(feed.length, 1, 'new length')
   t.equal(feed.append('are comfty', sk), 2)
 
@@ -56,9 +56,75 @@ test('empty / truncate to 0', t => {
   t.end()
 })
 
+test('conflict detection', t => {
+  const K0 = BottleFeed.signPair().sk
+  const a = new BottleFeed()
+  a.append('B0', K0)
+
+  // B superseeds than A; Valid
+  // A: K0 B0
+  // B: K0 B0 B1 B2
+  const b = a.clone()
+  b.append('B1', K0)
+  b.append('B2', K0)
+  t.equal(a._compare(b), 2, 'Positive when other is ahead')
+  t.equal(b.get(b.length - a._compare(b)), 'B1') // first new block
+
+  t.equal(b._compare(b.clone()), 0, 'Zero when in sync')
+  // A part of B; Valid
+  // B: K0 B0 B1 B2
+  // A: K0 B0
+  t.equal(b._compare(a), -2, 'Negative when other is behind')
+
+  // No common parent
+  // actually, common parent is 00000
+  // In order to throw a cause a real no-common parent
+  // we need slice() support.
+  // B: K0 B0 B1 B2
+  // C: K0 B3 B4
+  const c = new BottleFeed()
+  c.append('B3', K0)
+  c.append('B4', K0)
+  try { b._compare(c) } catch (err) {
+    t.ok(err)
+    t.equal(err.type, 'BlockConflict')
+    t.equal(err.idxA, 0)
+    t.equal(err.idxB, 0)
+  }
+  // Conflict at first blocks
+  try { c._compare(b) } catch (err) {
+    t.ok(err)
+    t.equal(err.type, 'BlockConflict')
+    t.equal(err.idxA, 0)
+    t.equal(err.idxB, 0)
+  }
+
+  // Common parent, but conflict @2
+  // D: K0 B3 B4 B6
+  // C: K0 B3 B4 B5
+  const d = c.clone()
+  c.append('B5', K0)
+  d.append('B6', K0)
+  try { d._compare(c) } catch (err) {
+    t.ok(err)
+    t.equal(err.type, 'BlockConflict')
+    t.equal(err.idxA, 2)
+    t.equal(err.idxB, 2)
+  }
+
+  // Just asserting sanity with 1 more behind test
+  d.append('B7', K0)
+  d.append('B8', K0)
+  const e = d.clone()
+  e.truncate(2)
+  const de = d._compare(e)
+  t.equal(de, -3, 'e is 3 behind')
+  t.end()
+})
+
+test('feed#slice(n) / feed#pickle(slice: n)')
+
 test('merge when empty', t => {
-  // I've decided that there is no load/parse, only merge.
-  // either from empty or from existing.
   const a = new BottleFeed()
   const { sk } = BottleFeed.signPair()
   const b = new BottleFeed()
@@ -68,7 +134,9 @@ test('merge when empty', t => {
   t.equal(b.get(0), a.get(0))
 
   a.append('Bye world!', sk)
+  t.equal(b.length, 1)
   b.merge(a.pickle(), t.error)
+  t.equal(b.length, 2, 'New blocks merged')
   t.equal(b.get(1), a.get(1))
   t.end()
 })

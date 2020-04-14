@@ -35,7 +35,7 @@ module.exports = class PicoFeed {
     const enc = opts.contentEncoding || 'utf8'
     this.encoding = codecs(enc === 'json' ? 'ndjson' : enc)
 
-    this.buf = Buffer.alloc(PicoFeed.INITIAL_FEED_SIZE)
+    this.buf = Buffer.alloc(opts.initialSize || PicoFeed.INITIAL_FEED_SIZE)
   }
 
   static signPair () {
@@ -46,17 +46,13 @@ module.exports = class PicoFeed {
   }
 
   _appendKey (data) {
-    if (this.buf.length < this.tail + PicoFeed.KEY.length + data.length) {
-      throw new Error('// TODO: resize buffer if needed')
-    }
+    this._ensureMinimumCapacity(this.tail + PicoFeed.KEY.length + data.length)
     this.tail += PicoFeed.KEY.copy(this.buf, this.tail)
     this.tail += data.copy(this.buf, this.tail)
   }
 
   _appendBlock (chunk) {
-    if (this.buf.length < this.tail + chunk.length) {
-      throw new Error('// TODO: resize buffer if needed')
-    }
+    this._ensureMinimumCapacity(this.tail + chunk.length)
     this._lastBlockOffset = this.tail
     this.tail += chunk.copy(this.buf, this.tail)
   }
@@ -118,13 +114,21 @@ module.exports = class PicoFeed {
     return mapper
   }
 
+  _ensureMinimumCapacity (size) {
+    if (this.buf.length < size) {
+      console.info('Increasing backing buffer to new size:', size)
+      const nbuf = Buffer.allocUnsafe(size + 32)
+      this.buf.copy(nbuf)
+      this.buf = nbuf
+    }
+  }
+
   _ensureKey (pk) {
     for (const k of this.keys) {
       if (pk.equals(k)) return
     }
     this._appendKey(pk)
   }
-
 
   get lastBlock () {
     if (!this._lastBlockOffset) return
@@ -153,12 +157,7 @@ module.exports = class PicoFeed {
     }
 
     // Resize current buffer if needed
-    if (this.buf.length < newEnd) {
-      console.info('Increasing backing buffer to new size:', newEnd)
-      const nbuf = Buffer.allocUnsafe(newEnd + 32)
-      this.buf.copy(nbuf)
-      this.buf = nbuf
-    }
+    this._ensureMinimumCapacity(newEnd)
 
     const map = PicoFeed.dstructBlock(this.buf, this.tail)
     // Debug
@@ -191,6 +190,11 @@ module.exports = class PicoFeed {
     return this.length
   }
 
+  /* This generator is pretty magic,
+   * we're traversing the buffer and validating it
+   * in one sweep. For optimization, properties
+   * like length could be cached using a dirty flag.
+   */
   * _index () {
     let offset = 0
     // vars for key parsing
@@ -213,7 +217,7 @@ module.exports = class PicoFeed {
         offset += ktok.length + KEY_SZ
       } else {
         const block = PicoFeed.dstructBlock(this.buf, offset)
-        if (block.size === 0) return // TODO: use a cork emoji instead?
+        if (block.size === 0) return
         if (offset + block.size > this.buf.length) return
 
         // First block should have empty parentSig
@@ -225,7 +229,7 @@ module.exports = class PicoFeed {
         for (let i = kchain.length - 1; i >= 0; i--) {
           valid = block.verify(kchain[i])
           if (!valid) continue
-          yield { type: 1, id: blockIdx++, block, offset }
+          yield { type: 1, id: blockIdx++, block, offset, key: kchain[i] }
           prevSig = block.sig
           offset = block.end
           break
@@ -257,14 +261,14 @@ module.exports = class PicoFeed {
   // Unpickle
   _unpack (str) {
     if (!str) throw new Error('Missing first argument')
-    if (typeof str !== 'string') throw new Error('url-encoded string expected')
-    // TODO: slice off other URL components if a whole url was provdied as input
+    if (typeof str !== 'string') throw new Error('url-friendly string expected')
     // TODO: re-engineer for efficiency
-    const pToken = encodeURI(PicoFeed.PICKLE)
-    const kToken = encodeURI(PicoFeed.KEY) // 21 wasted bytes on emoji..
-    const bToken = encodeURI(PicoFeed.BLOCK)
-    if (!str.startsWith(pToken)) throw new Error('NotPickleError')
-    let o = pToken.length
+    const pToken = encodeURIComponent(PicoFeed.PICKLE)
+    const kToken = encodeURIComponent(PicoFeed.KEY)
+    const bToken = encodeURIComponent(PicoFeed.BLOCK)
+    const pickleOffset = str.indexOf(pToken)
+    if (pickleOffset === -1) throw new Error('NotPickleError')
+    let o = pToken.length + pickleOffset
     let kM = 0
     let bM = 0
     let type = -1
@@ -307,21 +311,6 @@ module.exports = class PicoFeed {
     throw new Error('NotFoundError')
   }
 
-  // @deprecated will be rewritten in 2.0
-  truncateAfter (idx) {
-    const o = this.tail
-    console.warn('[PicoFeed#truncateAfter()] is deprecated, use truncate() instead')
-    idx++ // ensure loop runs at least once when idx = 0
-    for (const { type, block } of this._index()) {
-      if (type && !--idx) {
-        this.tail = block.end
-        this._lastBlockOffset = block.start
-        break
-      } else if (idx < 0) break
-    }
-    return o !== this.tail
-  }
-
   // Truncating is a lot faster
   // than spawning a new feed.
   truncate (toLength) {
@@ -350,41 +339,21 @@ module.exports = class PicoFeed {
     return filter()
   }
 
-  get blocks () {
+  blocks (slice = 0) {
     const itr = this._index()
     function * filter () {
-      for (const { type, block } of itr) if (type) yield block
+      for (const { type, block, key } of itr) if (type && --slice < 0) yield { block, key }
     }
     return filter()
   }
 
   /*
-   * Return values deisgned to be easily passed to feed.get(n) or feed.trunc(n)
-   * for conflict inspection / resolution.
-   * @return {Number} conflicting block index . 0: No common parent, <0: Success, >1: Conflict
+   * @param source something that from() can convert into feed.
+   * @return {boolean} true if source is/was merged, false if unmergable
    */
   merge (source, forceCopy = false) {
     if (!source) throw new Error('First argument `source` expected by merge')
-
-    // If URL; pick the hash
-    // if string pick the string,
-    // if another buffer.. interersting.
-    const sif = PicoFeed.isFeed(source)
-    const other = sif ? source : new PicoFeed()
-    if (!sif) {
-      // Load string
-      if (typeof source === 'string') other._unpack(source)
-      // Load URL
-      else if (typeof source.hash === 'string') other._unpack(source.hash)
-      // Load buffers
-      else if (Buffer.isBuffer(source)) {
-        // Assume buffer contains output from feed.pickle()
-        other._unpack(source.toString('utf8'))
-
-        // We're not handling raw block buffers because you'd need to provide
-        // the tail and _lastBlockOffset in order to iterate them.
-      }
-    }
+    const other = PicoFeed.from(source)
 
     // If we're empty then we'll just use theirs
     if (!this.length) {
@@ -400,44 +369,49 @@ module.exports = class PicoFeed {
       return true
     }
 
-    /*
-    // returns true / -1
-    A: K0 B0
-    B: K0 B0 B1 B2
+    // Expected 2½ outcomes.
+    // 1. conflict, no merge, abort mission
+    // 2.a) no conflict, no new blocks, abort.
+    // 2.b) no conflict, new blocks, copy + validate?
+    try {
+      const s = this._compare(other)
+      if (s < 1) return true
+      for (const { key, block } of other.blocks(other.length - 1)) {
+        this._ensureKey(key)
+        this._appendBlock(block.buffer)
+      }
+    } catch (err) {
+      switch (err.type) {
+        case 'BlockConflict':
+        case 'NoCommonParent':
+          return false
+      }
+      throw err
+    }
+  }
 
-    // returns true / -1 (detached/PITA mode)
-    A: K0 B0
-    B: B1 B2 // assuming B1 is signed by K0 and parented to B0
-
-    // returns false / 1, can't merge.
-    A: K0 B0 B1
-    B: K0 B0 B2
-
-    // returns false / 0, can't merge, no common parent.
-    A: K0 B0
-    B: K1 A1
-
-    // return true / -1
-    A: K0 B0 B1
-    B: K0 B0 B1 K1 A2 A3
-
-    // Return false/true // PKs are themselves unordered and unsigned.
-    A: K0 K1 K2 B0
-    B: A0 C0 B1
-    // this should theoretically merge but A's K1 and K2 keys are redundant during transfer.
-    // and could be removed or manipulated by third party. better to stash them within a
-    // block if you want to create a pre-deterimned order and ownership feed.
-
-    */
-
-    // Attempt #3
-    // 1. Find common parent
+  /* How to look at counters
+   *
+   * A  0  1  2  3
+   * K0 B1 B2 B3 B4
+   * K0       B3 B4 B5 B6  (slice of a pickle)
+   * B        0  1  2  3
+   *
+   * A  0  1  2  3
+   * K0 B1 B2 B3 B4
+   * K0 B1 B2 B3 B4 B5 B6
+   * B  0  1  2  3  4  5
+   *
+   */
+  _compare (other) {
+    if (this === other) return 0
     const counters = [-1, -1]
     const iterators = [this._index(), other._index()]
-    const keys = [] // This should be keyrings
     const blocks = []
     const eof = [false, false]
     const parents = []
+
+    // Define a single step.
     const step = (chain) => { // until block
       if (blocks[chain]) parents[chain] = blocks[chain].sig
       blocks[chain] = null
@@ -446,122 +420,101 @@ module.exports = class PicoFeed {
         eof[chain] = eof[chain] || n.done
         if (n.done && typeof n.value === 'undefined') break // Iterating an empty list..
 
-        if (!n.value.type) keys[chain] = n.value.key // TODO: conditionally add to keychain if key is trusted.
-        else {
+        if (n.value.type) {
           counters[chain]++
           blocks[chain] = n.value.block
         }
       }
     }
 
-    const validateBlock = chain => {
-      if (!blocks[chain].verify(keys[chain])) throw new Error('IntegrityError') // chain failed self-validity
-      if (parents[chain] && !blocks[chain].parentSig.equals(parents[chain])) throw new Error('IntegrityError') // B chain failed consistency
+    const fastForward = chain => {
+      const c = counters[chain] - 1
+      while (blocks[chain]) step(chain)
+      return counters[chain] - c
     }
 
-    // Ok, watch this.
     const A = 0
     const B = 1
+
+    const mkErr = text => {
+      const err = new Error(text)
+      err.type = text
+      err.idxA = counters[A]
+      err.idxB = counters[B]
+      return err
+    }
+
+    // 1. Find common parent / align B to A
     step(B)
-    if (!blocks[B]) return true // No blocks no conflicts
-    validateBlock(B)
-    const target = blocks[B].parentSig // || parents[B]
-    // Find common parent
+    if (!blocks[B]) return -fastForward(A) // No new blocks no conflicts
+    const target = blocks[B].parentSig
     while (!eof[A]) {
       step(A)
       if (!blocks[A]) break
       if (blocks[A].parentSig.equals(target)) break
     }
 
-    if (!blocks[A]) return counters // No common parent! [a: a.length > 0, b: 0]
-    validateBlock(A)
+    if (!blocks[A]) throw mkErr('NoCommonParent') // No common parent! [a: a.length > 0, b: 0]
+
     // Check if it's the same block
-    if (!blocks[A].sig.equals(blocks[B].sig)) return counters // Conflicting blocks found.
+    if (!blocks[A].sig.equals(blocks[B].sig)) throw mkErr('BlockConflict')
 
     // common parent found!
-    // start ziplock stepping while checking validity.
-    while (!(eof[B] || eof[A])) {
-      step(B)
-      if (!blocks[B]) break // Chain B ended without conflicts.
-      validateBlock(B)
+    if (counters[B] !== counters[A]) console.info('B is a slice of a pickle') // TODO
 
+    // 2. lockstep the iterators while checking validity.
+    while (1) {
       step(A)
-      if (!blocks[A]) break // Chain A ended without conflicts.
-      validateBlock(A)
-
-      // Is it the same block?
-      if (!blocks[A].sig.equals(blocks[B].sig)) return counters // Conflicting blocks found.
-    }
-    debugger
-    return true // Success, B super seeds A or is part of A.
-
-    // Attempt #1
-
-    // Ok other buffer is now initialized and we're not empty.
-    // prepare a set of registers, we're going to lockstep through
-    // both this and other _index() iterator in parallell.
-    let kregA = null
-    let kregB = null
-    let sregA = Buffer.alloc(PicoFeed.SIGNATURE_SIZE)
-    let sregB = sregA
-    let mEof = false
-    const iter = this._index()
-
-    for (const { type, key, block } of other._index()) {
-      if (!type) kregB = key
-
-      if (!mEof) {
-        const { value, done } = iter.next()
-        if (!value.type) kregA = value.key
-        else sregA = value.block.sig
-
-        // Ok this is the main merge op, where we assert that existing
-        // data matches remote data.
-        if (type) {
-          // when merging against premade buffers
-          if (!block.verify(kregB)) {
-            console.warn('merge failed, other feed failed it\'s authenticity')
-            return // Abort merge
-          }
-          // if (!kregA.equals(kregB))
-          // if (!sreg.equals(block.sig))
-          // TODO: detect and handle potential conflict
-
-          // By default, abort on first conflict.
-          debugger
-          if (conflict) {
-            if (!conflictHandler(sregB, sregA)) return
-            else {
-              this.truncate(n) // truncate before sregA and continue
-              mEof = true // truncating invalidates the iterator.
-            }
-          }
-        }
-
-        mEof = done
-      }
-
-      // merge their block into our buffer
-      if (type) {
-        if (block.verify(kregB) && sregB.equals(block.parentSig)) {
-          this._ensureKey(kregB)
-          this._appendBlock(block.buffer)
-          sregB = block.sig
-        } else {
-          console.warn('merge failed, other feed failed it\'s authenticity check')
-          debugger
-          return // Abort merge
-        }
+      step(B)
+      if (blocks[A] && blocks[B]) {
+        // check for conflicts.
+        if (!blocks[A].sig.equals(blocks[B].sig)) throw mkErr('BlockConflict')
+      } else if (!blocks[A] && !blocks[B]) {
+        return 0
+      } else if (!blocks[A]) {
+        // B has some new blocks @ counters[B]
+        return fastForward(B)
+      } else { // !block[B]
+        // No new blocks / B is behind
+        return -fastForward(A)
       }
     }
+  }
+
+  clone () {
+    const f = new PicoFeed({
+      contentEncoding: this.encoding,
+      initialSize: this.buf.length
+    })
+    this.buf.copy(f.buf)
+    f.tail = this.tail
+    f._lastBlockOffset = this._lastBlockOffset
+    return f
   }
 
   static isFeed (other) { return other instanceof PicoFeed }
 
   static from (source, opts = {}) {
-    const f = new PicoFeed(opts)
-    f.merge(source)
-    return f
+    // If URL; pick the hash
+    // if string pick the string,
+    // if another buffer.. interersting.
+    const sif = PicoFeed.isFeed(source)
+    const feed = sif ? source : new PicoFeed(opts)
+    if (!sif) {
+      // Load string
+      if (typeof source === 'string') feed._unpack(source)
+      // Load URL
+      else if (typeof source.hash === 'string') feed._unpack(source.hash)
+      // Load buffers
+      else if (Buffer.isBuffer(source)) {
+        // Assume buffer contains output from feed.pickle()
+        feed._unpack(source.toString('utf8'))
+
+        // We're not handling raw block buffers because you'd need to provide
+        // the tail and _lastBlockOffset in order to iterate them.
+      }
+    }
+    return feed
   }
 }
 // Url compatible b64
