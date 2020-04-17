@@ -26,8 +26,6 @@ module.exports = class PicoFeed {
   static get COUNTER_SIZE () { return 4 } // Sizeof UInt32BE
   static get META_SIZE () { return PicoFeed.SIGNATURE_SIZE * 2 + PicoFeed.COUNTER_SIZE }
 
-  get tip () { throw new Error('The tip was a lie') }
-
   constructor (opts = {}) {
     this.tail = 0 // Tail always points to next empty space
     this._lastBlockOffset = 0 // Ptr to start of last block
@@ -462,7 +460,7 @@ module.exports = class PicoFeed {
     // common parent found!
     if (counters[B] !== counters[A]) console.info('B is a slice of a pickle') // TODO
 
-    // 2. lockstep the iterators while checking validity.
+    // 2. lockstep the iterators while checking for conflicts.
     while (1) {
       step(A)
       step(B)
