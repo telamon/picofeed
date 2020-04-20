@@ -5,19 +5,14 @@
 
 > Microscopic Secure Feed occupying a single buffer
 
-This is a tiny secure blockchain, it's designed to live within an URL.
-
-Looks like major desktop & mobile browsers have support
-for at least 64kilobyte of data after the `#`-component.
-
-Why? URLs are everywhere!
+This is a tiny secure blockchain, it's designed be small enough to be easily
+hidden or easily replicated, for example it can be embedded inside a URL.
 
 - URLs can be stored on most platforms and channels
-- Sharing urls is easy
+- Sharing URLs is easy
 - [No network code](https://xkcd.com/2259/)
 - Browser support via Browserify / node-globals (requires Buffer shim)
-
-now picofeeds can be everywhere too.
+- No concensi attached.
 
 ## <a name="install"></a> Install
 

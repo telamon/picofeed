@@ -32,7 +32,7 @@ module.exports = class PicoFeed {
 
     const enc = opts.contentEncoding || 'utf8'
     this.encoding = codecs(enc === 'json' ? 'ndjson' : enc)
-
+    this._MAX_FEED_SIZE = opts.maxSize || PicoFeed.MAX_FEED_SIZE
     this.buf = Buffer.alloc(opts.initialSize || PicoFeed.INITIAL_FEED_SIZE)
   }
 
@@ -55,7 +55,7 @@ module.exports = class PicoFeed {
     this.tail += chunk.copy(this.buf, this.tail)
   }
 
-  get free () { return PicoFeed.MAX_FEED_SIZE - this.tail }
+  get free () { return this._MAX_FEED_SIZE - this.tail }
 
   static dstructBlock (buf, start = 0) {
     /**
@@ -149,9 +149,15 @@ module.exports = class PicoFeed {
     const newEnd = this.tail + dN + metaSz
 
     // Ensure we're not gonna pass the boundary
-    if (PicoFeed.MAX_FEED_SIZE < newEnd) {
-      console.error('NOFIT', this.tail, dN, metaSz)
-      throw new Error('MAX_FEED_SIZE reached, block won\'t fit:' + newEnd)
+    if (this._MAX_FEED_SIZE < newEnd) {
+      // console.error('NOFIT', this.tail, dN, metaSz)
+      console.error(`MAX_FEED_SIZE reached, block won't fit: ${newEnd} > ${this._MAX_FEED_SIZE}`)
+      const err = new Error('FeedOverflowError')
+      err.type = err.message
+      err.maxSize = this._MAX_FEED_SIZE
+      err.requestedSize = newEnd
+      err.bytesOverflow = newEnd - this._MAX_FEED_SIZE
+      throw err
     }
 
     // Resize current buffer if needed
@@ -479,8 +485,8 @@ module.exports = class PicoFeed {
     }
   }
 
-  clone () {
-    const f = new PicoFeed({
+  clone (FeedDerivate = PicoFeed) {
+    const f = new FeedDerivate({
       contentEncoding: this.encoding,
       initialSize: this.buf.length
     })
