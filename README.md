@@ -12,8 +12,8 @@ hidden or easily replicated, for example it can be embedded inside a URL.
 - Sharing URLs is easy
 - [No network code](https://xkcd.com/2259/)
 - Browser support via Browserify / node-globals (requires Buffer shim)
-- No concensi attached.
 - [ ] Picofeed#slice(offset) support is on the way.
+
 ## <a name="install"></a> Install
 
 ```
