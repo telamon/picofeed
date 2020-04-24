@@ -13,7 +13,7 @@ hidden or easily replicated, for example it can be embedded inside a URL.
 - [No network code](https://xkcd.com/2259/)
 - Browser support via Browserify / node-globals (requires Buffer shim)
 - No concensi attached.
-
+- [ ] Picofeed#slice(offset) support is on the way.
 ## <a name="install"></a> Install
 
 ```
@@ -22,31 +22,32 @@ npm install picofeed
 
 ## <a name="usage"></a> Usage
 
-```
+```js
 const Pico = require('picofeed')
 
-const feed = new Pico()
-console.log(feed.key) // => 32byte, Buffer
-console.log(feed.secretKey) // => 32byte, Buffer
+const alice = Pico.signPair() // generate a sodium sign_pair
+const bob = Pico.signPair()
 
-feed.append('Hello') // => 1
+const feed = new Pico()
+
+feed.append('Hello', alice.sk) // => 1
 feed.get(0) // => 'Hello'
 
 const url = 'http://myapp.tld/#' + feed.pickle()
 
 // share the url
 
-const remoteFeed = new Pico(url)
+const remoteFeed = new Pico.from(url)
 remoteFeed.get(0) // => 'Hello'
 
-const { publicKey, secretKey } = // generate a sodium sign_pair
-
 // Attach a block to feed
-remoteFeed.append('Hey bob!', secretKey)
+remoteFeed.append('Hey alice!', sk)
 
-// second URL containing 2 blocks from 2 different identities.
+// share second URL containing 2 blocks from 2 different identities.
 const url2 = 'http://myapp.tld/#' + remoteFeed.pickle()
 
+feed.merge(url2) // => 1
+feed.get(1) // => 'Hey alice'
 ```
 
 ## Ad
@@ -61,21 +62,24 @@ const url2 = 'http://myapp.tld/#' + remoteFeed.pickle()
 
 If you're reading this it means that the docs are missing or in a bad state.
 
-My research is generating code at a higher rate than documentation,
-thus you have my sincere apologies.
+Writing and maintaining friendly and useful documentation takes
+effort and time. In order to do faster releases
+I will from now on provide documentation relational to project activity.
 
-If you have any questions, PLEASE OPEN AN ISSUE -
-I'll do my best to happily provide an answer.
+  __How_to_Help____________________________________.
+ |                                                 |
+ |  - Open an issue if you have ANY questions! :)  |
+ |  - Star this repo if you found it interesting   |
+ |  - Fork off & help document <3                  |
+ |.________________________________________________|
 
 I publish all of my work as Libre software and will continue to do so,
-please drop me a penny at Patreon
-and help fund experiments like these.
+drop me a penny at Patreon to help fund experiments like these.
 
 Patreon: https://www.patreon.com/decentlabs
 Discord: https://discord.gg/K5XjmZx
 Telegram: https://t.me/decentlabs_se
 ```
-
 
 ## <a name="contribute"></a> Contributing
 
