@@ -50,6 +50,36 @@ feed.merge(url2) // => 1
 feed.get(1) // => 'Hey alice'
 ```
 
+## Sparse feeds (slice merge)
+
+`Feed#slice(n)` has been added `in 2.1.x` allowing you
+to distribute and merge individual blocks.
+
+```js
+const { sk } = Pico.signPair()
+const X = new Pico()
+
+X.append('Alpha', sk)
+X.append('Bravo', sk)
+// X now contains ['Alpha', 'Bravo']
+
+const Y = org.slice(1) // Y contains ['Bravo']
+
+X.append('Charlie', sk) // ['Alpha', 'Bravo', 'Charlie']
+
+const Z = org.slice(2) // Z contains ['Charlie']
+
+X.truncate(1) // X becomes ['Alpha']
+
+// Merge fails can't connect Alpha to Charlie
+X.merge(Z) // => false
+
+// Disconnected slice-merge
+Z.merge(Y) // => true; Z now contains ['Bravo', 'Charlie']
+
+X.merge(Z) // => true; X contains ['Alpha', 'Bravo', 'Charlie']
+```
+
 ## Ad
 
 ```ad
