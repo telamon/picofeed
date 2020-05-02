@@ -9,10 +9,8 @@ This is a tiny secure blockchain, it's designed be small enough to be easily
 hidden or easily replicated, for example it can be embedded inside a URL.
 
 - URLs can be stored on most platforms and channels
-- Sharing URLs is easy
 - [No network code](https://xkcd.com/2259/)
 - Browser support via Browserify / node-globals (requires Buffer shim)
-- [ ] Picofeed#slice(offset) support is on the way.
 
 ## <a name="install"></a> Install
 
