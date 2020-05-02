@@ -1,6 +1,6 @@
 {
   "name": "picofeed",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": " Microscopic Secure Feed occupying a single buffer",
   "main": "index.js",
   "files": [
@@ -26,7 +26,13 @@
     "type": "git",
     "url": "git+https://github.com/telamon/picofeed.git"
   },
-  "keywords": ["secure", "feed", "p2p", "block", "chain"],
+  "keywords": [
+    "secure",
+    "feed",
+    "p2p",
+    "block",
+    "chain"
+  ],
   "author": {
     "name": "Tony Ivanov",
     "email": "telamohn@pm.me"
