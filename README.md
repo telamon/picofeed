@@ -77,6 +77,7 @@ X.merge(Z) // => false
 // Disconnected slice-merge
 Z.merge(Y) // => true; Z now contains ['Bravo', 'Charlie']
 
+// Merge with Z now succeeds, X reproduced to full length.
 X.merge(Z) // => true; X contains ['Alpha', 'Bravo', 'Charlie']
 ```
 
