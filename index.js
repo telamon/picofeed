@@ -29,7 +29,7 @@ module.exports = class PicoFeed {
   constructor (opts = {}) {
     this.tail = 0 // Tail always points to next empty space
     this._lastBlockOffset = 0 // Ptr to start of last block
-
+    this._hasGenisis = null
     const enc = opts.contentEncoding || 'utf8'
     this.encoding = codecs(enc === 'json' ? 'ndjson' : enc)
     this._MAX_FEED_SIZE = opts.maxSize || PicoFeed.MAX_FEED_SIZE
@@ -53,6 +53,12 @@ module.exports = class PicoFeed {
     this._ensureMinimumCapacity(this.tail + chunk.length)
     this._lastBlockOffset = this.tail
     this.tail += chunk.copy(this.buf, this.tail)
+  }
+
+  get partial () {
+    // length triggers _index(), empty feeds are neither partial nor full.
+    if (this._hasGenisis === null && !this.length) return false
+    return !this._hasGenisis
   }
 
   get free () { return this._MAX_FEED_SIZE - this.tail }
@@ -224,11 +230,21 @@ module.exports = class PicoFeed {
         if (block.size === 0) return
         if (offset + block.size > this.buf.length) return
 
-        // First block should have empty parentSig
-        if (!blockIdx && !block.parentSig.equals(Buffer.alloc(64))) return
+        // Parent verification
+        if (!blockIdx) {
+          // partial feeds/slices lack the genesis block
+          // without the genesis block you can't trust the contents.
+          //
+          // In lay-man terms, a feed without a genesis block is
+          // a baseless 'rumor', if you can find and verify it's
+          // sources it can be upgraded into a 'fact'
+          this._hasGenisis = block.parentSig.equals(Buffer.alloc(64))
+        } else if (!prevSig.equals(block.parentSig)) {
+          // Consequent blocks must state correct parent,
+          // otherwise we lose value of replication.
+          return
+        }
 
-        // Consequent blocks must state correct parent.
-        if (blockIdx && !prevSig.equals(block.parentSig)) return
         let valid = false
         for (let i = kchain.length - 1; i >= 0; i--) {
           valid = block.verify(kchain[i])
@@ -251,15 +267,28 @@ module.exports = class PicoFeed {
 
   toString () { return this.pickle() }
 
-  pickle () {
+  pickle (slice = 0) {
     let str = encodeURIComponent(PicoFeed.PICKLE.toString('utf8'))
     const kToken = PicoFeed.KEY
     const bToken = PicoFeed.BLOCK
-    for (const fact of this._index()) {
+    const itr = (slice ? this.slice(slice) : this)._index()
+    for (const fact of itr) {
       str += !fact.type ? kToken + b2ub(fact.key)
         : bToken + b2ub(fact.block.buffer)
     }
     return str
+  }
+
+  /**
+   * Returns a sliced feed.
+   */
+  slice (n = 0, noKeys = false) {
+    const out = new PicoFeed()
+    for (const fact of this.blocks(n)) {
+      if (!noKeys) out._ensureKey(fact.key)
+      out._appendBlock(fact.block.buffer)
+    }
+    return out
   }
 
   // Unpickle
@@ -351,26 +380,45 @@ module.exports = class PicoFeed {
     return filter()
   }
 
+  _steal (other, copy = false) {
+    if (copy) {
+      this.buf = Buffer.alloc(other.buf.length)
+      other.buf.copy(this.buf)
+    } else {
+      this.buf = other.buf
+    }
+    this.tail = other.tail
+    this._lastBlockOffset = other._lastBlockOffset
+  }
+
+  // little bit of meta-programming, that probably can be avoided.
+  get __clazz () {
+    return Object.getPrototypeOf(this).constructor
+  }
+
   /*
    * @param source something that from() can convert into feed.
    * @return {boolean} true if source is/was merged, false if unmergable
    */
   merge (source, forceCopy = false) {
     if (!source) throw new Error('First argument `source` expected by merge')
-    const other = PicoFeed.from(source)
+    const other = this.__clazz.from(source)
 
     // If we're empty then we'll just use theirs
     if (!this.length) {
-      if (forceCopy) {
-        this.buf = Buffer.alloc(other.buf.length)
-        other.buf.copy(this.buf)
-      } else {
-        this.buf = other.buf
-      }
-      this.tail = other.tail
-      this._lastBlockOffset = other._lastBlockOffset
-      // TODO: this.validate? or has it been validated already?
+      this._steal(other, forceCopy)
       return true
+    }
+
+    const attemptReverseMerge = () => {
+      if (this._reverseMergeFlag) return false
+      const c = other.clone() // Avoid mutating other
+      c._reverseMergeFag = true // Prevent loops
+
+      if (c.merge(this)) { // Success, steal buffer
+        this._steal(c)
+        return true
+      } else return false // Give up
     }
 
     // Expected 2½ outcomes.
@@ -380,18 +428,27 @@ module.exports = class PicoFeed {
     try {
       const s = this._compare(other)
       if (s < 1) return true
-      for (const { key, block } of other.blocks(other.length - 1)) {
+      for (const { key, block } of other.blocks(other.length - s)) {
         this._ensureKey(key)
         this._appendBlock(block.buffer)
       }
     } catch (err) {
       switch (err.type) {
         case 'BlockConflict':
-        case 'NoCommonParent':
           return false
+        case 'NoCommonParent':
+          /* When this feed is partial, another possiblility
+           * occurs, and that is that if this.merge(other) has
+           * no common parent, there is yet a possibility
+           * that other.merge(this) yields a non-conflicting longer
+           * chain
+           */
+          if (!this.partial) return false
+          else return attemptReverseMerge()
       }
       throw err
     }
+    return true
   }
 
   /* How to look at counters
@@ -456,8 +513,17 @@ module.exports = class PicoFeed {
       step(A)
       if (!blocks[A]) break
       if (blocks[A].parentSig.equals(target)) break
-    }
 
+      if (blocks[A].sig.equals(target) && this.length === counters[A] + 1) {
+        /* Current A is parent of B,
+         * - If there are no more blocks in A
+         *   then we can merge everything from B without conflict
+         * - If there are more blocks in A, then proceed,
+         *   the rest of the logic is legit and will detect conflicts.
+         */
+        return fastForward(B)
+      }
+    }
     if (!blocks[A]) throw mkErr('NoCommonParent') // No common parent! [a: a.length > 0, b: 0]
 
     // Check if it's the same block
@@ -485,14 +551,11 @@ module.exports = class PicoFeed {
     }
   }
 
-  clone (FeedDerivate = PicoFeed) {
-    const f = new FeedDerivate({
-      contentEncoding: this.encoding,
-      initialSize: this.buf.length
-    })
-    this.buf.copy(f.buf)
-    f.tail = this.tail
-    f._lastBlockOffset = this._lastBlockOffset
+  clone (FeedDerivate) {
+    FeedDerivate = FeedDerivate || this.__clazz
+    const f = new FeedDerivate()
+    f.encoding = this.encoding
+    f._steal(this, true)
     return f
   }
 

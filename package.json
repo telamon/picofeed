@@ -26,7 +26,7 @@
     "type": "git",
     "url": "git+https://github.com/telamon/picofeed.git"
   },
-  "keywords": [],
+  "keywords": ["secure", "feed", "p2p", "block", "chain"],
   "author": {
     "name": "Tony Ivanov",
     "email": "telamohn@pm.me"

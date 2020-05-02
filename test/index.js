@@ -122,7 +122,60 @@ test('conflict detection', t => {
   t.end()
 })
 
-test('feed#slice(n) / feed#pickle(slice: n)')
+test('feed#slice(n) / feed#pickle(slice: n)', t => {
+  const a = new BottleFeed()
+  const { sk } = BottleFeed.signPair()
+  a.append('zero', sk)
+  const b = a.clone()
+  t.equal(a.partial, false)
+  t.equal(b.partial, false)
+  a.append('one', sk)
+  a.append('two', sk)
+  const s1 = a.slice(1)
+  t.equal(s1.partial, true)
+  const s2 = a.slice(2)
+  t.equal(s2.partial, true)
+
+  t.equal(s1.get(0), 'one') // [1, 2]
+  t.equal(s1.get(1), 'two') // [1, 2]
+  t.equal(s2.get(0), 'two') // [2]
+
+  // test bin merge full with slice
+  // [0].merge([1, 2]) // [0, 1, 2]
+  const c = b.clone()
+
+  c.merge(s1)
+  t.equal(c.get(1), 'one')
+
+  // test pickled merge full with slice
+  // [0].merge([1, 2]) // [0, 1, 2]
+  const d = b.clone()
+  d.merge(s1.pickle())
+  t.equal(d.get(2), 'two')
+
+  // [0].merge([2]) // => [0]
+  const e = b.clone()
+  e.merge(s2)
+  t.equal(e.length, 1) // no merge,
+
+  // Test bin merge sliced with full (reverse order merge)
+  // [1, 2].merge([0]) // => [0, 1, 2]
+  s1.merge(b)
+  t.equal(s1.get(2), 'two')
+
+  // Final Test: merge of two slices in reverse order
+  // [2].merge([1]) // => [1, 2]
+  const f = new BottleFeed()
+  f.append('zero', sk)
+  f.append('one', sk)
+  const g = f.slice(1) // [1]
+  f.append('two', sk)
+  const h = f.slice(2) // [2]
+  h.merge(g)
+  t.equal(h.get(0), 'one')
+  t.equal(h.get(1), 'two')
+  t.end()
+})
 
 test('merge when empty', t => {
   const a = new BottleFeed()
