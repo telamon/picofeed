@@ -63,11 +63,11 @@ X.append('Alpha', sk)
 X.append('Bravo', sk)
 // X now contains ['Alpha', 'Bravo']
 
-const Y = org.slice(1) // Y contains ['Bravo']
+const Y = X.slice(1) // Y contains ['Bravo']
 
 X.append('Charlie', sk) // ['Alpha', 'Bravo', 'Charlie']
 
-const Z = org.slice(2) // Z contains ['Charlie']
+const Z = X.slice(2) // Z contains ['Charlie']
 
 X.truncate(1) // X becomes ['Alpha']
 
