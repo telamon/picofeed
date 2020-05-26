@@ -6,8 +6,8 @@
 > Microscopic Secure Feed occupying a single buffer
 
 This is a tiny secure blockchain, it's designed be small enough to be easily
-hidden or easily replicated, for example it can be embedded inside a URL or any other
-secure feed as a means to transfer information cross-medium securely.
+hidden or easily replicated, for example it can be embedded inside a URL or nested within other
+secure feeds as a means to transfer information cross-medium securely.
 
 - URLs can be stored on most platforms and channels
 - [No network code](https://xkcd.com/2259/)
