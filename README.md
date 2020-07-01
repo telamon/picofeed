@@ -1,7 +1,6 @@
 # picofeed
 
 [![JavaScript Style Guide](https://img.shields.io/badge/code_style-standard-brightgreen.svg)](https://standardjs.com)
-[![standard-readme compliant](https://img.shields.io/badge/readme%20style-standard-brightgreen.svg?style=flat-square)](https://github.com/RichardLitt/standard-readme)
 
 > Microscopic Secure Feed occupying a single buffer
 
@@ -81,7 +80,7 @@ Z.merge(Y) // => true; Z now contains ['Bravo', 'Charlie']
 X.merge(Z) // => true; X contains ['Alpha', 'Bravo', 'Charlie']
 ```
 
-## Ad
+## Donations
 
 ```ad
  _____                      _   _           _
@@ -114,7 +113,7 @@ Telegram: https://t.me/decentlabs_se
 
 ## <a name="contribute"></a> Contributing
 
-Ideas and contributions to the project are welcome. You must follow this [guideline](https://github.com/telamon/picofeed/blob/master/CONTRIBUTING.md).
+Be aware that by making a pull request, you agree to release your modifications under the licenses stated above.
 
 ## License
 

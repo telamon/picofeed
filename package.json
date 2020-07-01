@@ -1,7 +1,7 @@
 {
   "name": "picofeed",
   "version": "2.1.0",
-  "description": " Microscopic Secure Feed occupying a single buffer",
+  "description": "Microscopic Secure Feed occupying a single buffer",
   "main": "index.js",
   "files": [
     "lib",
@@ -12,7 +12,7 @@
     "test": "tape test/*.js",
     "debug": "node inspect $(npm bin)/tape test/*.js",
     "lint": "standard",
-    "prepublishOnly": "npm test"
+    "prepublishOnly": "standard && npm test"
   },
   "dependencies": {
     "codecs": "^2.0.0",

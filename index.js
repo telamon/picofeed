@@ -13,7 +13,6 @@ const {
 /* eslint-enable camelcase */
 
 const codecs = require('codecs')
-
 module.exports = class PicoFeed {
   static get MAX_FEED_SIZE () { return 64 << 10 } // 64 kilo byte
   static get INITIAL_FEED_SIZE () { return 1 << 10 } // 1 kilo byte
@@ -120,7 +119,7 @@ module.exports = class PicoFeed {
 
   _ensureMinimumCapacity (size) {
     if (this.buf.length < size) {
-      console.info('Increasing backing buffer to new size:', size)
+      // console.info('Increasing backing buffer to new size:', size)
       const nbuf = Buffer.allocUnsafe(size + 32)
       this.buf.copy(nbuf)
       this.buf = nbuf
@@ -413,7 +412,7 @@ module.exports = class PicoFeed {
     const attemptReverseMerge = () => {
       if (this._reverseMergeFlag) return false
       const c = other.clone() // Avoid mutating other
-      c._reverseMergeFag = true // Prevent loops
+      c._reverseMergeFlag = true // Prevent loops
 
       if (c.merge(this)) { // Success, steal buffer
         this._steal(c)
@@ -437,9 +436,8 @@ module.exports = class PicoFeed {
         case 'BlockConflict':
           return false
         case 'NoCommonParent':
-          /* When this feed is partial, another possiblility
-           * occurs, and that is that if this.merge(other) has
-           * no common parent, there is yet a possibility
+          /* When this feed is partial and if this.merge(other)
+           * has no common parent; then there is yet a possibility
            * that other.merge(this) yields a non-conflicting longer
            * chain
            */

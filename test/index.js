@@ -194,6 +194,15 @@ test('merge when empty', t => {
   t.end()
 })
 
+test('no contentEncoding', t => {
+  const b = Buffer.from([0, 0, 1, 2, 3])
+  const f = new BottleFeed({ contentEncoding: 'binary' })
+  const { sk } = BottleFeed.signPair()
+  f.append(b, sk)
+  t.ok(b.equals(f.get(0)))
+  t.end()
+})
+
 // Don't compress the keys, cause we wanna be able to
 // quickly scan through links without unpacking them.
 // So that means compression is out of scope for PicoFeed
