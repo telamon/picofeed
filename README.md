@@ -5,13 +5,12 @@
 > Microscopic Secure Feed occupying a single buffer
 
 This is a tiny secure blockchain, it's designed be small enough to be easily
-hidden or easily replicated, for example it can be embedded inside a URL.
+hidden or easily replicated, for example it can be embedded inside a URL or nested within other
+secure feeds as a means to transfer information cross-medium securely.
 
 - URLs can be stored on most platforms and channels
-- Sharing URLs is easy
 - [No network code](https://xkcd.com/2259/)
 - Browser support via Browserify / node-globals (requires Buffer shim)
-- [ ] Picofeed#slice(offset) support is on the way.
 
 ## <a name="install"></a> Install
 
