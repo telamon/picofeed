@@ -79,6 +79,10 @@ Z.merge(Y) // => true; Z now contains ['Bravo', 'Charlie']
 X.merge(Z) // => true; X contains ['Alpha', 'Bravo', 'Charlie']
 ```
 
+## Changelog
+- `2.1.0` Added feed#merge(other, opts, indexingCallback) that allows validation + abort merge interactively
+- `2.0.0` Added feed slices and merge
+
 ## Donations
 
 ```ad
