@@ -141,6 +141,7 @@ module.exports = class PicoFeed {
     if (!this._lastBlockOffset) return
     return PicoFeed.dstructBlock(this.buf, this._lastBlockOffset)
   }
+
   /**
    * returns lastBlock contents decoded with given user encoding
    */

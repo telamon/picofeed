@@ -80,8 +80,12 @@ X.merge(Z) // => true; X contains ['Alpha', 'Bravo', 'Charlie']
 ```
 
 ## Changelog
-- `2.1.0` Added feed#merge(other, opts, indexingCallback) that allows validation + abort merge interactively
-- `2.0.0` Added feed slices and merge
+
+#### `2.2.0`
+- Added feed.merge(other, opts, indexingCallback) that allows validation + abort merge interactively
+- Added feed.last which returns the block-contents using provided encoding.
+#### `2.0.0`
+-  Added feed slices and merge
 
 ## Donations
 
@@ -110,8 +114,7 @@ I publish all of my work as Libre software and will continue to do so,
 drop me a penny at Patreon to help fund experiments like these.
 
 Patreon: https://www.patreon.com/decentlabs
-Discord: https://discord.gg/K5XjmZx
-Telegram: https://t.me/decentlabs_se
+Discord: https://discord.gg/tJhmxqX
 ```
 
 ## <a name="contribute"></a> Contributing
