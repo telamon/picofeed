@@ -1,8 +1,8 @@
 const test = require('tape')
-const BottleFeed = require('..')
+const PicoFeed = require('..')
 test('new feed', t => {
-  const feed = new BottleFeed()
-  const { sk } = BottleFeed.signPair()
+  const feed = new PicoFeed()
+  const { sk } = PicoFeed.signPair()
   feed.append('Hello World', sk, (err, seq) => {
     t.error(err)
     t.equal(seq, 1)
@@ -14,14 +14,14 @@ test('new feed', t => {
   const str = feed.pickle() // # => URLSAFE STRING
   // feed.on('append', (seq, msg) => { debugger })
   // feed.repickle(otherBuffer) // Merge/Comp other buffer/string, causing 'append' event to fire
-  const f2 = BottleFeed.from(str)
+  const f2 = PicoFeed.from(str)
   t.equal(f2.get(0), 'Hello World')
   t.end()
 })
 
 test('truncation', t => {
-  const feed = new BottleFeed()
-  const { sk } = BottleFeed.signPair()
+  const feed = new PicoFeed()
+  const { sk } = PicoFeed.signPair()
   t.equal(feed.append('Hello World!', sk), 1)
 
   t.equal(feed.append('New shoes,', sk), 2)
@@ -39,8 +39,8 @@ test('truncation', t => {
 })
 
 test('empty / truncate to 0', t => {
-  const feed = new BottleFeed()
-  const { sk } = BottleFeed.signPair()
+  const feed = new PicoFeed()
+  const { sk } = PicoFeed.signPair()
   t.equal(feed.append('Hello World!', sk), 1)
 
   t.equal(feed.append('New shoes,', sk), 2)
@@ -57,8 +57,8 @@ test('empty / truncate to 0', t => {
 })
 
 test('conflict detection', t => {
-  const K0 = BottleFeed.signPair().sk
-  const a = new BottleFeed()
+  const K0 = PicoFeed.signPair().sk
+  const a = new PicoFeed()
   a.append('B0', K0)
 
   // B superseeds than A; Valid
@@ -82,7 +82,7 @@ test('conflict detection', t => {
   // we need slice() support.
   // B: K0 B0 B1 B2
   // C: K0 B3 B4
-  const c = new BottleFeed()
+  const c = new PicoFeed()
   c.append('B3', K0)
   c.append('B4', K0)
   try { b._compare(c) } catch (err) {
@@ -123,8 +123,8 @@ test('conflict detection', t => {
 })
 
 test('feed#slice(n) / feed#pickle(slice: n)', t => {
-  const a = new BottleFeed()
-  const { sk } = BottleFeed.signPair()
+  const a = new PicoFeed()
+  const { sk } = PicoFeed.signPair()
   a.append('zero', sk)
   const b = a.clone()
   t.equal(a.partial, false)
@@ -165,7 +165,7 @@ test('feed#slice(n) / feed#pickle(slice: n)', t => {
 
   // Final Test: merge of two slices in reverse order
   // [2].merge([1]) // => [1, 2]
-  const f = new BottleFeed()
+  const f = new PicoFeed()
   f.append('zero', sk)
   f.append('one', sk)
   const g = f.slice(1) // [1]
@@ -178,17 +178,17 @@ test('feed#slice(n) / feed#pickle(slice: n)', t => {
 })
 
 test('merge when empty', t => {
-  const a = new BottleFeed()
-  const { sk } = BottleFeed.signPair()
-  const b = new BottleFeed()
+  const a = new PicoFeed()
+  const { sk } = PicoFeed.signPair()
+  const b = new PicoFeed()
 
   a.append('Hello World', sk)
-  b.merge(a.pickle(), t.error)
+  b.merge(a.pickle())
   t.equal(b.get(0), a.get(0))
 
   a.append('Bye world!', sk)
   t.equal(b.length, 1)
-  b.merge(a.pickle(), t.error)
+  b.merge(a.pickle())
   t.equal(b.length, 2, 'New blocks merged')
   t.equal(b.get(1), a.get(1))
   t.end()
@@ -196,10 +196,57 @@ test('merge when empty', t => {
 
 test('no contentEncoding', t => {
   const b = Buffer.from([0, 0, 1, 2, 3])
-  const f = new BottleFeed({ contentEncoding: 'binary' })
-  const { sk } = BottleFeed.signPair()
+  const f = new PicoFeed({ contentEncoding: 'binary' })
+  const { sk } = PicoFeed.signPair()
   f.append(b, sk)
   t.ok(b.equals(f.get(0)))
+  t.end()
+})
+
+test('index state while merging', t => {
+  t.plan(6)
+  const { sk } = PicoFeed.signPair()
+  const a = new PicoFeed()
+  a.append('Hey', sk)
+  a.append('How are you?', sk)
+
+  const b = new PicoFeed()
+  b.merge(a, ({ entry, seq }) => {
+    switch (seq) {
+      case 0:
+        t.equals(entry, 'Hey', 'merging a0')
+        break
+      case 1:
+        t.equals(entry, 'How are you?', 'merging a1')
+        break
+      default:
+        t.fail('Invalid state')
+    }
+  })
+  b.merge(a, () => t.fail('Nothing to merge'))
+
+  b.append('Good', sk)
+  a.merge(b, ({ entry }) => t.equals(entry, 'Good', 'merging b3'))
+
+  a.append('Great!', sk)
+  b.merge(a, ({ entry }) => t.equals(entry, 'Great!', 'merging a4'))
+
+  const fork = a.clone()
+  fork.truncate(a.length - 1)
+  fork.append('Great! Did you hear the news???', sk)
+
+  const mutated = b.merge(fork, ({ block, conflict }, abort) => {
+    // Conflict when b.lastBlock.sig !== block.parentSig
+
+    // TODO: This callback is never invoked because
+    // we do not currently handle conflicts.
+    // when conflict is detected the merge fast-aborts right now.
+    t.ok(conflict)
+    t.equals(typeof abort, 'function')
+    abort()
+  })
+  t.equal(mutated, false) // TODO: Toggle to true when interactive conflict handling is implemented.
+  t.equal(b.last, 'Great!')
   t.end()
 })
 
@@ -210,7 +257,7 @@ test('no contentEncoding', t => {
 // achieve block compression. Leaving this here for future references
 test.skip('compression', t => {
   const c = require('compressjs')
-  const feed = new BottleFeed()
+  const feed = new PicoFeed()
   feed.append('Hello World')
   const str = feed.pickle()
   Object.keys(c)

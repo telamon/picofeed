@@ -13,6 +13,7 @@ const {
 /* eslint-enable camelcase */
 
 const codecs = require('codecs')
+const inspectSymbol = require('inspect-custom-symbol')
 module.exports = class PicoFeed {
   static get MAX_FEED_SIZE () { return 64 << 10 } // 64 kilo byte
   static get INITIAL_FEED_SIZE () { return 1 << 10 } // 1 kilo byte
@@ -112,7 +113,10 @@ module.exports = class PicoFeed {
       verify (pk) {
         return crypto_sign_verify_detached(mapper.sig, mapper.dat, pk)
       },
-      get buffer () { return buf.subarray(start, mapper.safeEnd) }
+      get buffer () { return buf.subarray(start, mapper.safeEnd) },
+      [inspectSymbol] () {
+        return `[BlockMapper] start: ${mapper.start}, blocksize: ${mapper.size}, id: ${mapper.sig.slice(0, 6).toString('hex')}, parent: ${mapper.parentSig.slice(0, 6).toString('hex')}`
+      }
     }
     return mapper
   }
@@ -136,6 +140,14 @@ module.exports = class PicoFeed {
   get lastBlock () {
     if (!this._lastBlockOffset) return
     return PicoFeed.dstructBlock(this.buf, this._lastBlockOffset)
+  }
+  /**
+   * returns lastBlock contents decoded with given user encoding
+   */
+  get last () {
+    const block = this.lastBlock
+    if (!block) return
+    return this.encoding.decode(block.body)
   }
 
   append (data, sk, cb) {
@@ -248,7 +260,7 @@ module.exports = class PicoFeed {
         for (let i = kchain.length - 1; i >= 0; i--) {
           valid = block.verify(kchain[i])
           if (!valid) continue
-          yield { type: 1, id: blockIdx++, block, offset, key: kchain[i] }
+          yield { type: 1, seq: blockIdx++, block, offset, key: kchain[i] }
           prevSig = block.sig
           offset = block.end
           break
@@ -374,7 +386,7 @@ module.exports = class PicoFeed {
   blocks (slice = 0) {
     const itr = this._index()
     function * filter () {
-      for (const { type, block, key } of itr) if (type && --slice < 0) yield { block, key }
+      for (const entry of itr) if (entry.type && --slice < 0) yield entry
     }
     return filter()
   }
@@ -388,6 +400,7 @@ module.exports = class PicoFeed {
     }
     this.tail = other.tail
     this._lastBlockOffset = other._lastBlockOffset
+    return true
   }
 
   // little bit of meta-programming, that probably can be avoided.
@@ -396,27 +409,70 @@ module.exports = class PicoFeed {
   }
 
   /*
+   * This method is going to need a docs page of it's own..
+   * The fastest way to merge a temporary feed into an empty feed is to steal the
+   * temporary feeds buffer; This is not possible while doing interactive merging as
+   * by optimization we forego the entire loop with no way to index nor abort.
+   * So for now userValidate implies forceCopy/noSteal
+   *
    * @param source something that from() can convert into feed.
+   * @param options Object, merge options
+   * @param options.forceCopy `Boolean` prevents buffer stealing from source; Forces new buffers to be created an copied
+   * @param indexCallback Invoked for each new commit that is about to be merged, abort method is NOT asyncroneous.
    * @return {boolean} true if source is/was merged, false if unmergable
    */
-  merge (source, forceCopy = false) {
+  merge (source, options = {}, indexCallback = null) {
+    if (typeof options === 'function') return this.merge(source, undefined, options)
+    const forceCopy = options.forceCopy || false
     if (!source) throw new Error('First argument `source` expected by merge')
     const other = this.__clazz.from(source)
 
+    // Prepare user index/validator
+    const interactiveMode = typeof indexCallback === 'function'
+    const userValidate = !interactiveMode
+      ? () => false
+      : entry => {
+        // Invoke user indexing callback to let them process
+        // and validate a block before actually merging it.
+        let abort = false
+        Object.defineProperty(entry, 'entry', {
+          get: this.encoding.decode.bind(null, entry.block.body)
+        })
+        entry.id = entry.block.sig
+        indexCallback(entry, () => { abort = true }) // Abortion is only possible in syncronized mode.
+        return abort
+      }
+
+    const rebase = blocksIterator => {
+      let mutated = false
+      for (const entry of blocksIterator) {
+        const { key, block } = entry
+        if (interactiveMode) {
+          const aborted = userValidate(entry)
+          if (aborted) return mutated
+        } else mutated = true
+
+        // Rebase block onto self (no parents are modified)
+        this._ensureKey(key)
+        this._appendBlock(block.buffer)
+      }
+      return mutated
+    }
+
     // If we're empty then we'll just use theirs
     if (!this.length) {
-      this._steal(other, forceCopy)
-      return true
+      if (!interactiveMode) return this._steal(other, forceCopy)
+      else return rebase(other.blocks())
     }
 
     const attemptReverseMerge = () => {
       if (this._reverseMergeFlag) return false
       const c = other.clone() // Avoid mutating other
-      c._reverseMergeFlag = true // Prevent loops
+      c._reverseMergeFlag = true // Prevent loops without poisoning the state.
 
-      if (c.merge(this)) { // Success, steal buffer
-        this._steal(c)
-        return true
+      if (c.merge(this, options, indexCallback)) { // Success, steal buffer
+        if (!interactiveMode) return this._steal(c)
+        else return rebase(other.blocks())
       } else return false // Give up
     }
 
@@ -427,10 +483,7 @@ module.exports = class PicoFeed {
     try {
       const s = this._compare(other)
       if (s < 1) return true
-      for (const { key, block } of other.blocks(other.length - s)) {
-        this._ensureKey(key)
-        this._appendBlock(block.buffer)
-      }
+      return rebase(other.blocks(other.length - s))
     } catch (err) {
       switch (err.type) {
         case 'BlockConflict':
@@ -446,7 +499,6 @@ module.exports = class PicoFeed {
       }
       throw err
     }
-    return true
   }
 
   /* How to look at counters
