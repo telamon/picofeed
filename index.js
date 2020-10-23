@@ -451,11 +451,12 @@ module.exports = class PicoFeed {
         if (interactiveMode) {
           const aborted = userValidate(entry)
           if (aborted) return mutated
-        } else mutated = true
+        }
 
         // Rebase block onto self (no parents are modified)
         this._ensureKey(key)
         this._appendBlock(block.buffer)
+        mutated = true
       }
       return mutated
     }
