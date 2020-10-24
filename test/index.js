@@ -268,3 +268,13 @@ test.skip('compression', t => {
     })
   console.log(str)
 })
+
+test('Interactive ff empty', t => {
+  t.plan(2)
+  const { sk } = PicoFeed.signPair()
+  const a = new PicoFeed()
+  a.append('First', sk)
+  a.append('Second', sk)
+  new PicoFeed().merge(a, ({ entry }) => t.pass(entry))
+  t.end()
+})
