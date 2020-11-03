@@ -1,3 +1,5 @@
+[`pure | 📦`](https://github.com/telamon/create-pure)
+[`code style | standard`](https://standardjs.com/)
 # picofeed
 
 [![JavaScript Style Guide](https://img.shields.io/badge/code_style-standard-brightgreen.svg)](https://standardjs.com)
@@ -11,6 +13,8 @@ secure feeds as a means to transfer information cross-medium securely.
 - URLs can be stored on most platforms and channels
 - [No network code](https://xkcd.com/2259/)
 - Browser support via Browserify / node-globals (requires Buffer shim)
+- Singular dependency: sodium-universal
+
 
 ## <a name="install"></a> Install
 
@@ -19,6 +23,9 @@ npm install picofeed
 ```
 
 ## <a name="usage"></a> Usage
+
+Sorry most of the API is currently undocumented (read the source),
+feel free to poke me a bout it!
 
 ```js
 const Pico = require('picofeed')
@@ -80,6 +87,13 @@ X.merge(Z) // => true; X contains ['Alpha', 'Bravo', 'Charlie']
 ```
 
 ## Changelog
+#### `3.0.0`
+- removed automatic encodings
+- changed `feed.get(n)` returns instance of BlockMapper.
+- changed `feed.slice(start, end)`
+- added block cache to avoid redundant signature-verifications
+- added BlockMapper now also contains public-key
+- sodium-universal upgraded to 3.0.0
 
 #### `2.2.0`
 - Added feed.merge(other, opts, indexingCallback) that allows validation + abort merge interactively
@@ -113,14 +127,19 @@ I will from now on provide documentation relational to project activity.
 I publish all of my work as Libre software and will continue to do so,
 drop me a penny at Patreon to help fund experiments like these.
 
-Patreon: https://www.patreon.com/decentlabs
 Discord: https://discord.gg/tJhmxqX
+Patreon: https://www.patreon.com/decentlabs
 ```
 
-## <a name="contribute"></a> Contributing
+## Contributing
 
-Be aware that by making a pull request, you agree to release your modifications under the licenses stated above.
+By making a pull request, you agree to release your modifications under
+the license stated in the next section.
+
+Only changesets by human contributors will be accepted.
 
 ## License
 
-GNU AGPLv3 © Tony Ivanov
+[AGPL-3.0-or-later](./LICENSE)
+
+2020 &#x1f12f; Tony Ivanov
