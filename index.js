@@ -30,12 +30,9 @@ module.exports = class PicoFeed {
 
   constructor (opts = {}) {
     this.tail = 0 // Tail always points to next empty space
-    // @deprecated
-    this._lastBlockOffset = 0 // Ptr to start of last block
     this._hasGenisis = null
-    this._keychain = null // key-cache
+    this._keychain = [] // key-cache
     this._cache = [] // block-cache
-
 
     const enc = opts.contentEncoding || 'utf8'
     this.encoding = codecs(enc === 'json' ? 'ndjson' : enc)
@@ -51,7 +48,6 @@ module.exports = class PicoFeed {
 
   get free () { return this._MAX_FEED_SIZE - this.tail }
 
-
   get _isDirty () {
     if (!this.tail) return false // Buffer is empty
     if (!this._cache.length) return true // Cache is empty
@@ -59,7 +55,12 @@ module.exports = class PicoFeed {
     const descriptor = this._cache[this._cache.length - 1]
     const block = PicoFeed.mapBlock(this.buf, descriptor.offset)
     // Detect unindexed data between last cached block and tail
-    return block.end === this.tail
+    return block.end !== this.tail
+  }
+
+  get length () {
+    this._reIndex()
+    return this._cache.length
   }
 
   getBlock (idx) {
@@ -70,11 +71,12 @@ module.exports = class PicoFeed {
   }
 
   get (idx) {
-    if (idx < 0) throw new Error('Positive integer expected')
-    for (const { type, block } of this._index()) {
-      if (type && !idx--) return this.encoding.decode(block.body)
-    }
-    throw new Error('NotFoundError')
+    this._reIndex()
+    const block = this.getBlock(idx)
+    if (!block) debugger
+    this._reIndex()
+    if (!block) throw new Error('NotFoundError')
+    return this.encoding.decode(block.body)
   }
 
   get lastBlock () {
@@ -91,22 +93,14 @@ module.exports = class PicoFeed {
   }
 
   get keys () {
-    const itr = this._index()
-    function * filter () {
-      for (const { type, key } of itr) if (!type) yield key
-    }
-    return filter()
-  }
-
-  get length () {
-    let i = 0
-    for (const { type } of this._index()) if (type) i++
-    return i
+    this._reIndex()
+    return [...this._keychain]
   }
 
   // Forcefully re-index entire feed
-  _reIndex () {
-    const iterator = this._index()
+  _reIndex (force = false) {
+    if (!force && !this._isDirty) return
+    const iterator = this._index(force)
     while (!iterator.next().done) continue
   }
 
@@ -118,7 +112,6 @@ module.exports = class PicoFeed {
 
   _appendBlock (chunk) {
     this._ensureMinimumCapacity(this.tail + chunk.length)
-    this._lastBlockOffset = this.tail
     this.tail += chunk.copy(this.buf, this.tail)
   }
 
@@ -185,7 +178,6 @@ module.exports = class PicoFeed {
     crypto_sign_detached(map.sig, map.dat, sk)
     // sanity check.
     if (!map.verify(pk)) throw new Error('newly stored block is invalid. something went wrong')
-    this._lastBlockOffset = this.tail
     this.tail = newEnd
 
     // This method isn't async but we'll honour the old ways
@@ -198,13 +190,15 @@ module.exports = class PicoFeed {
    * in one sweep. For optimization, properties
    * like length could be cached using a dirty flag.
    */
-  * _index () {
+  * _index (clearCache = false) {
     let offset = 0
-
-    // Cache related state (Only support full-reset atm)
-    this._keychain = []
-    this._cache = []
     let blockIdx = 0
+
+    // Reset caches
+    if (clearCache) {
+      this._keychain = []
+      this._cache = []
+    }
 
     const ktok = PicoFeed.KEY
     const KEY_SZ = 32
@@ -221,7 +215,18 @@ module.exports = class PicoFeed {
         yield { type: 0, id: this._keychain.length, key: key, offset }
         this._keychain.push(key)
         offset += ktok.length + KEY_SZ
+      } else if (this._cache[blockIdx] && this._cache[blockIdx].offset === offset) {
+        // Load block from cache
+        const seq = blockIdx++
+        const desc = this._cache[seq]
+        const key = this._keychain[desc.keyId]
+        if (!key) throw new Error('InternalError:KeyCacheBroken')
+        const block = PicoFeed.mapBlock(this.buf, desc.offset, key)
+        yield { type: 1, seq, key, block, offset: desc.offset }
+        prevSig = block.sig
+        offset = block.end
       } else {
+        // Index block from buffer and register in cache
         const block = PicoFeed.mapBlock(this.buf, offset)
         if (block.size === 0) return
         if (offset + block.size > this.buf.length) return
@@ -272,9 +277,9 @@ module.exports = class PicoFeed {
    */
   slice (n = 0, noKeys = false) {
     const out = new PicoFeed()
-    for (const fact of this.blocks(n)) {
-      if (!noKeys) out._ensureKey(fact.key)
-      out._appendBlock(fact.block.buffer)
+    for (const { block } of this.blocks(n)) {
+      if (!noKeys) out._ensureKey(block.key)
+      out._appendBlock(block.buffer)
     }
     return out
   }
@@ -329,19 +334,19 @@ module.exports = class PicoFeed {
   truncate (toLength) {
     if (toLength === 0) { // Empty the feed
       this.tail = 0
-      this._lastBlockOffset = 0
+      this._cache = []
+      this._keychain = []
       return true
     }
 
     const o = this.tail
-    for (const { type, block } of this._index()) {
-      if (type && !--toLength) {
-        this.tail = block.end
-        this._lastBlockOffset = block.start
-        break
-      } else if (toLength < 0) break
-    }
-    return o !== this.tail
+    const block = this.getBlock(toLength - 1)
+    this.tail = block.end
+    if (o === this.tail) return false
+    // Truncate cache
+    let l = this._cache.length - toLength
+    while (l--) this._cache.pop()
+    return true
   }
 
   blocks (slice = 0) {
@@ -360,7 +365,9 @@ module.exports = class PicoFeed {
       this.buf = other.buf
     }
     this.tail = other.tail
-    this._lastBlockOffset = other._lastBlockOffset
+    // TODO: optimization to avoid signature checks already done in other
+    // this._keychain = [...other._keychain]
+    // this._cache = [...other._cache]
     return true
   }
 
