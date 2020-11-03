@@ -287,3 +287,16 @@ test('All BlockMappers should be tagged with symbol', t => {
   t.ok(a.lastBlock[PicoFeed.BLOCK_MAPPER_SYMBOL])
   t.end()
 })
+
+test('BlockMapper should contain key', t => {
+  const { pk, sk } = PicoFeed.signPair()
+  const a = new PicoFeed()
+  a.append('First', sk)
+
+  for (const block of a.blocks()) {
+    t.ok(block.key.equals(pk))
+  }
+
+  t.ok(a.lastBlock.key.equals(pk))
+  t.end()
+})

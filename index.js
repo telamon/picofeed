@@ -30,8 +30,13 @@ module.exports = class PicoFeed {
 
   constructor (opts = {}) {
     this.tail = 0 // Tail always points to next empty space
+    // @deprecated
     this._lastBlockOffset = 0 // Ptr to start of last block
     this._hasGenisis = null
+    this._keychain = null // key-cache
+    this._cache = null // block-cache
+    this._blockIdx = -1 // dirty counter / number of verified blocks
+
     const enc = opts.contentEncoding || 'utf8'
     this.encoding = codecs(enc === 'json' ? 'ndjson' : enc)
     this._MAX_FEED_SIZE = opts.maxSize || PicoFeed.MAX_FEED_SIZE
@@ -65,65 +70,6 @@ module.exports = class PicoFeed {
 
   get free () { return this._MAX_FEED_SIZE - this.tail }
 
-  static dstructBlock (buf, start = 0) {
-    /**
-     * Block layout
-     *  ___________
-     * | Signature | <----------.
-     * |-----------|             '.
-     * | ParentSig | -.            '.
-     * |-----------|  |- HEADR ---.  '.
-     * | Body Size | -'           |    '.
-     * |-----------|              |--> Sign(skey, data)
-     * |           |              |
-     * | Body BLOB | -------------'
-     * |           |
-     * `-----------'
-     */
-    const SIG_N = PicoFeed.SIGNATURE_SIZE
-    const COUNT_N = PicoFeed.COUNTER_SIZE
-    const HDR_N = SIG_N + COUNT_N
-    const mapper = {
-      get start () { return start },
-      get sig () { return buf.subarray(start, start + SIG_N) },
-      get header () { return buf.subarray(start + SIG_N, start + SIG_N + HDR_N) },
-      get parentSig () { return buf.subarray(start + SIG_N, start + SIG_N + SIG_N) },
-
-      // Unsafe size read, use validateRead to ensure that you're reading a block.
-      get size () { return buf.readUInt32BE(start + SIG_N * 2) },
-      set size (v) {
-        if (typeof v !== 'number' || v < 0 || v + start + SIG_N + HDR_N > buf.length) throw new Error('Invalid blob size')
-        return buf.writeUInt32BE(v, start + SIG_N * 2)
-      },
-      get body () {
-        return buf.subarray(start + SIG_N + HDR_N, mapper.safeEnd)
-      },
-      get dat () {
-        return buf.subarray(start + SIG_N, mapper.safeEnd)
-      },
-      get end () { return start + SIG_N + HDR_N + mapper.size },
-      get safeEnd () {
-        const s = mapper.size
-        if (s < 1) throw new Error('Invalid blob size: ' + s)
-        const end = start + SIG_N + HDR_N + s
-        if (end > buf.length) throw new Error('Incomplete or invalid block: end overflows buffer length' + end)
-        return end
-      },
-      // get _unsafeNext () { return PicoFeed.dstructBlock(buf, mapper.end) },
-      get next () { return PicoFeed.dstructBlock(buf, mapper.safeEnd) },
-
-      verify (pk) {
-        return crypto_sign_verify_detached(mapper.sig, mapper.dat, pk)
-      },
-      get buffer () { return buf.subarray(start, mapper.safeEnd) },
-      [inspectSymbol] () {
-        return `[BlockMapper] start: ${mapper.start}, blocksize: ${mapper.size}, id: ${mapper.sig.slice(0, 6).toString('hex')}, parent: ${mapper.parentSig.slice(0, 6).toString('hex')}`
-      },
-      [BLOCK_MAPPER_SYMBOL]: true
-    }
-    return mapper
-  }
-
   _ensureMinimumCapacity (size) {
     if (this.buf.length < size) {
       // console.info('Increasing backing buffer to new size:', size)
@@ -140,9 +86,22 @@ module.exports = class PicoFeed {
     this._appendKey(pk)
   }
 
+  // Forcefully re-index entire feed
+  _reIndex () {
+    const iterator = this._index()
+    while (!iterator.next().done) continue
+  }
+
+  getBlock (idx) {
+    if (this._blockIdx === -1) this._reIndex()
+    const desc = this._cache[idx]
+    if (!desc) return
+
+    return PicoFeed.mapBlock(this.buf, desc.offset, this._keychain[desc.keyId])
+  }
+
   get lastBlock () {
-    if (!this._lastBlockOffset) return
-    return PicoFeed.dstructBlock(this.buf, this._lastBlockOffset)
+    return this.getBlock(this.length - 1)
   }
 
   /**
@@ -184,13 +143,7 @@ module.exports = class PicoFeed {
     // Resize current buffer if needed
     this._ensureMinimumCapacity(newEnd)
 
-    const map = PicoFeed.dstructBlock(this.buf, this.tail)
-    // Debug
-    // map.header.fill('H')
-    // map.size = dN
-    // map.body.fill('B')
-    // map.sig.fill('S')
-    // map.parentSig.fill('P')
+    const map = PicoFeed.mapBlock(this.buf, this.tail)
 
     map.header.fill(0) // Zero out the header
     map.size = dN
@@ -222,13 +175,16 @@ module.exports = class PicoFeed {
    */
   * _index () {
     let offset = 0
-    // vars for key parsing
-    const kchain = []
+
+    // Cache related state (Only support full-reset atm)
+    this._keychain = []
+    this._cache = []
+    this._blockIdx = 0
+
     const ktok = PicoFeed.KEY
     const KEY_SZ = 32
     // vars for block parsing
     let prevSig = null
-    let blockIdx = 0
     while (true) {
       if (offset >= this.tail) return
 
@@ -237,34 +193,31 @@ module.exports = class PicoFeed {
 
       if (isKey) {
         const key = this.buf.slice(offset + ktok.length, offset + ktok.length + KEY_SZ)
-        yield { type: 0, id: kchain.length, key: key, offset }
-        kchain.push(key)
+        yield { type: 0, id: this._keychain.length, key: key, offset }
+        this._keychain.push(key)
         offset += ktok.length + KEY_SZ
       } else {
-        const block = PicoFeed.dstructBlock(this.buf, offset)
+        const block = PicoFeed.mapBlock(this.buf, offset)
         if (block.size === 0) return
         if (offset + block.size > this.buf.length) return
 
         // Parent verification
-        if (!blockIdx) {
+        if (!this._blockIdx) {
           // partial feeds/slices lack the genesis block
-          // without the genesis block you can't trust the contents.
-          //
-          // In lay-man terms, a feed without a genesis block is
-          // a baseless 'rumor', if you can find and verify it's
-          // sources it can be upgraded into a 'fact'
           this._hasGenisis = block.parentSig.equals(Buffer.alloc(64))
         } else if (!prevSig.equals(block.parentSig)) {
-          // Consequent blocks must state correct parent,
-          // otherwise we lose value of replication.
-          return
+          // Consequent blocks must state correct parent
+          return // reject block
         }
 
         let valid = false
-        for (let i = kchain.length - 1; i >= 0; i--) {
-          valid = block.verify(kchain[i])
+        for (let i = this._keychain.length - 1; i >= 0; i--) {
+          valid = block.verify(this._keychain[i])
           if (!valid) continue
-          yield { type: 1, seq: blockIdx++, block, offset, key: kchain[i] }
+          const seq = this._blockIdx++
+          block.key = this._keychain[i]
+          this._cache[seq] = { offset, keyId: i }
+          yield { type: 1, seq, block, offset, key: this._keychain[i] }
           prevSig = block.sig
           offset = block.end
           break
@@ -288,7 +241,8 @@ module.exports = class PicoFeed {
     const bToken = PicoFeed.BLOCK
     const itr = (slice ? this.slice(slice) : this)._index()
     for (const fact of itr) {
-      str += !fact.type ? kToken + b2ub(fact.key)
+      str += !fact.type
+        ? kToken + b2ub(fact.key)
         : bToken + b2ub(fact.block.buffer)
     }
     return str
@@ -643,6 +597,77 @@ module.exports = class PicoFeed {
       }
     }
     return feed
+  }
+
+  static mapBlock (buf, start = 0, key = null) {
+    /**
+     * Block layout
+     *  ___________
+     * | Signature | <----------.
+     * |-----------|             '.
+     * | ParentSig | -.            '.
+     * |-----------|  |- HEADR ---.  '.
+     * | Body Size | -'           |    '.
+     * |-----------|              |--> Sign(skey, data)
+     * |           |              |
+     * | Body BLOB | -------------'
+     * |           |
+     * `-----------'
+     */
+    const SIG_N = PicoFeed.SIGNATURE_SIZE
+    const COUNT_N = PicoFeed.COUNTER_SIZE
+    const HDR_N = SIG_N + COUNT_N
+    const mapper = {
+      [BLOCK_MAPPER_SYMBOL]: true,
+      get start () { return start },
+      get sig () { return buf.subarray(start, start + SIG_N) },
+      get header () { return buf.subarray(start + SIG_N, start + SIG_N + HDR_N) },
+      get parentSig () { return buf.subarray(start + SIG_N, start + SIG_N + SIG_N) },
+
+      // Unsafe size read, use validateRead to ensure that you're reading a block.
+      get size () { return buf.readUInt32BE(start + SIG_N * 2) },
+      set size (v) {
+        if (typeof v !== 'number' || v < 0 || v + start + SIG_N + HDR_N > buf.length) throw new Error('Invalid blob size')
+        return buf.writeUInt32BE(v, start + SIG_N * 2)
+      },
+      get body () {
+        return buf.subarray(start + SIG_N + HDR_N, mapper.safeEnd)
+      },
+      get dat () {
+        return buf.subarray(start + SIG_N, mapper.safeEnd)
+      },
+      get end () { return start + SIG_N + HDR_N + mapper.size },
+      get safeEnd () {
+        const s = mapper.size
+        if (s < 1) throw new Error('Invalid blob size: ' + s)
+        const end = start + SIG_N + HDR_N + s
+        if (end > buf.length) throw new Error('Incomplete or invalid block: end overflows buffer length' + end)
+        return end
+      },
+      // get _unsafeNext () { return PicoFeed.mapBlock(buf, mapper.end) },
+      get next () { return PicoFeed.mapBlock(buf, mapper.safeEnd) },
+
+      verify (pk) {
+        return crypto_sign_verify_detached(mapper.sig, mapper.dat, pk)
+      },
+      get buffer () { return buf.subarray(start, mapper.safeEnd) },
+
+      get key () {
+        // Key is an experimental feature, fail-fast for now.
+        if (!key) throw new Error('InternalError:MissingKey')
+        return key
+      },
+      set key (pk) {
+        // Key is an experimental feature, fail-fast for now.
+        if (key) throw new Error('InternalError:KeyExists')
+        key = pk
+      },
+
+      [inspectSymbol] () {
+        return `[BlockMapper] start: ${mapper.start}, blocksize: ${mapper.size}, id: ${mapper.sig.slice(0, 6).toString('hex')}, parent: ${mapper.parentSig.slice(0, 6).toString('hex')}`
+      }
+    }
+    return mapper
   }
 }
 // Url compatible b64
