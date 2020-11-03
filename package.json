@@ -1,6 +1,6 @@
 {
   "name": "picofeed",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Microscopic Secure Feed occupying a single buffer",
   "main": "index.js",
   "files": [
