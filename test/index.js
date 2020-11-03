@@ -212,13 +212,14 @@ test('index state while merging', t => {
   a.append('How are you?', sk)
 
   const b = new PicoFeed()
-  b.merge(a, ({ entry, seq }) => {
-    switch (seq) {
+  let seq = 0
+  b.merge(a, block => {
+    switch (seq++) {
       case 0:
-        t.equals(entry, 'Hey', 'merging a0')
+        t.equals(block.body.toString(), 'Hey', 'merging a0')
         break
       case 1:
-        t.equals(entry, 'How are you?', 'merging a1')
+        t.equals(block.body.toString(), 'How are you?', 'merging a1')
         break
       default:
         t.fail('Invalid state')
@@ -227,10 +228,10 @@ test('index state while merging', t => {
   b.merge(a, () => t.fail('Nothing to merge'))
 
   b.append('Good', sk)
-  a.merge(b, ({ entry }) => t.equals(entry, 'Good', 'merging b3'))
+  a.merge(b, block => t.equals(block.body.toString(), 'Good', 'merging b3'))
 
   a.append('Great!', sk)
-  b.merge(a, ({ entry }) => t.equals(entry, 'Great!', 'merging a4'))
+  b.merge(a, block => t.equals(block.body.toString(), 'Great!', 'merging a4'))
 
   const fork = a.clone()
   fork.truncate(a.length - 1)
@@ -277,6 +278,23 @@ test('Interactive ff empty', t => {
   a.append('First', sk)
   a.append('Second', sk)
   new PicoFeed().merge(a, ({ entry }) => t.pass(entry))
+  t.end()
+})
+
+test('Slice range', t => {
+  const { sk } = PicoFeed.signPair()
+  const a = new PicoFeed()
+  a.append('0', sk)
+  a.append('1', sk)
+  a.append('2', sk)
+  a.append('3', sk)
+  a.append('4', sk)
+  a.append('5', sk)
+  const b = a.slice(2, 5)
+  t.deepEqual(
+    b.toArray().map(b => b.body.toString()),
+    ['2', '3', '4']
+  )
   t.end()
 })
 

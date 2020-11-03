@@ -131,6 +131,12 @@ module.exports = class PicoFeed {
     this._appendKey(pk)
   }
 
+  toArray () {
+    const arr = []
+    for (const block of this.blocks()) arr.push(block)
+    return arr
+  }
+
   append (data, sk, cb) {
     if (!sk) throw new Error('Can\'t append without a signing secret')
     if (sk.length !== 64) throw new Error('Unknown signature secret key format')
@@ -275,9 +281,9 @@ module.exports = class PicoFeed {
   /**
    * Returns a sliced feed.
    */
-  slice (n = 0, noKeys = false) {
+  slice (start = 0, end = undefined, noKeys = false) {
     const out = new PicoFeed()
-    for (const { block } of this.blocks(n)) {
+    for (const block of this.blocks(start, end)) {
       if (!noKeys) out._ensureKey(block.key)
       out._appendBlock(block.buffer)
     }
@@ -349,12 +355,17 @@ module.exports = class PicoFeed {
     return true
   }
 
-  blocks (slice = 0) {
+  * blocks (start = 0, end = 0) {
+    if (start < 0) start = this.length + start
+    if (!end) end = this.length
+    if (end < 0) end = this.length + end + 1
+    while (start < end) yield this.getBlock(start++)
+    /*
     const itr = this._index()
     function * filter () {
       for (const entry of itr) if (entry.type && --slice < 0) yield entry
     }
-    return filter()
+    return filter() */
   }
 
   _steal (other, copy = false) {
@@ -399,24 +410,20 @@ module.exports = class PicoFeed {
     const interactiveMode = typeof indexCallback === 'function'
     const userValidate = !interactiveMode
       ? () => false
-      : entry => {
+      : block => {
         // Invoke user indexing callback to let them process
         // and validate a block before actually merging it.
         let abort = false
-        Object.defineProperty(entry, 'entry', {
-          get: this.encoding.decode.bind(null, entry.block.body)
-        })
-        entry.id = entry.block.sig
-        indexCallback(entry, () => { abort = true }) // Abortion is only possible in syncronized mode.
+        indexCallback(block, () => { abort = true }) // Abortion is only possible in syncronized mode.
         return abort
       }
 
     const rebase = blocksIterator => {
       let mutated = false
-      for (const entry of blocksIterator) {
-        const { key, block } = entry
+      for (const block of blocksIterator) {
+        const key = block.key
         if (interactiveMode) {
-          const aborted = userValidate(entry)
+          const aborted = userValidate(block)
           if (aborted) return mutated
         }
 
@@ -426,7 +433,7 @@ module.exports = class PicoFeed {
         mutated = true
       }
       return mutated
-    }
+   }
 
     // If we're empty then we'll just use theirs
     if (!this.length) {
