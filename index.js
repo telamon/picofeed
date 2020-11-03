@@ -572,12 +572,11 @@ module.exports = class PicoFeed {
     if (!sif) {
       // Upgrade a single mapped block into a feed
       if (source[BLOCK_MAPPER_SYMBOL]) {
-        // TODO: blockMapper.key needs to be available for this to work.
-        // but it would let us merge individual raw blocks that were manually
-        // destructured.
-      }
+        feed._ensureKey(source.key)
+        feed._appendBlock(source.buffer)
+
       // Load string
-      if (typeof source === 'string') feed._unpack(source)
+      } else if (typeof source === 'string') feed._unpack(source)
       // Load URL
       else if (typeof source.hash === 'string') feed._unpack(source.hash)
       // Load buffers

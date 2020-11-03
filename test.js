@@ -314,3 +314,15 @@ test('BlockMapper should contain key', t => {
   t.ok(a.last.key.equals(pk))
   t.end()
 })
+
+test('Merge should accept BlockMapper', t => {
+  const { sk } = PicoFeed.signPair()
+  const a = new PicoFeed()
+  a.append('alpha', sk)
+  a.append('beta', sk)
+  a.append('gamma', sk)
+  const b = new PicoFeed()
+  for (const block of a.blocks()) b.merge(block)
+  t.equal(b.length, a.length)
+  t.end()
+})
