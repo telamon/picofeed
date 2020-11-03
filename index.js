@@ -14,6 +14,7 @@ const {
 
 const codecs = require('codecs')
 const inspectSymbol = require('inspect-custom-symbol')
+const BLOCK_MAPPER_SYMBOL = Symbol('BlockMapper')
 module.exports = class PicoFeed {
   static get MAX_FEED_SIZE () { return 64 << 10 } // 64 kilo byte
   static get INITIAL_FEED_SIZE () { return 1 << 10 } // 1 kilo byte
@@ -25,6 +26,7 @@ module.exports = class PicoFeed {
   static get SIGNATURE_SIZE () { return crypto_sign_BYTES } // eslint-disable-line camelcase
   static get COUNTER_SIZE () { return 4 } // Sizeof UInt32BE
   static get META_SIZE () { return PicoFeed.SIGNATURE_SIZE * 2 + PicoFeed.COUNTER_SIZE }
+  static get BLOCK_MAPPER_SYMBOL () { return BLOCK_MAPPER_SYMBOL }
 
   constructor (opts = {}) {
     this.tail = 0 // Tail always points to next empty space
@@ -116,7 +118,8 @@ module.exports = class PicoFeed {
       get buffer () { return buf.subarray(start, mapper.safeEnd) },
       [inspectSymbol] () {
         return `[BlockMapper] start: ${mapper.start}, blocksize: ${mapper.size}, id: ${mapper.sig.slice(0, 6).toString('hex')}, parent: ${mapper.parentSig.slice(0, 6).toString('hex')}`
-      }
+      },
+      [BLOCK_MAPPER_SYMBOL]: true
     }
     return mapper
   }
@@ -620,6 +623,12 @@ module.exports = class PicoFeed {
     const sif = PicoFeed.isFeed(source)
     const feed = sif ? source : new PicoFeed(opts)
     if (!sif) {
+      // Upgrade a single mapped block into a feed
+      if (source[BLOCK_MAPPER_SYMBOL]) {
+        // TODO: blockMapper.key needs to be available for this to work.
+        // but it would let us merge individual raw blocks that were manually
+        // destructured.
+      }
       // Load string
       if (typeof source === 'string') feed._unpack(source)
       // Load URL
