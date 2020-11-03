@@ -34,8 +34,8 @@ module.exports = class PicoFeed {
     this._lastBlockOffset = 0 // Ptr to start of last block
     this._hasGenisis = null
     this._keychain = null // key-cache
-    this._cache = null // block-cache
-    this._blockIdx = -1 // dirty counter / number of verified blocks
+    this._cache = [] // block-cache
+
 
     const enc = opts.contentEncoding || 'utf8'
     this.encoding = codecs(enc === 'json' ? 'ndjson' : enc)
@@ -43,11 +43,71 @@ module.exports = class PicoFeed {
     this.buf = Buffer.alloc(opts.initialSize || PicoFeed.INITIAL_FEED_SIZE)
   }
 
-  static signPair () {
-    const sk = Buffer.allocUnsafe(crypto_sign_SECRETKEYBYTES)
-    const pk = Buffer.allocUnsafe(crypto_sign_PUBLICKEYBYTES)
-    crypto_sign_keypair(pk, sk)
-    return { sk, pk }
+  get partial () {
+    // length triggers _index(), empty feeds are neither partial nor full.
+    if (this._hasGenisis === null && !this.length) return false
+    return !this._hasGenisis
+  }
+
+  get free () { return this._MAX_FEED_SIZE - this.tail }
+
+
+  get _isDirty () {
+    if (!this.tail) return false // Buffer is empty
+    if (!this._cache.length) return true // Cache is empty
+
+    const descriptor = this._cache[this._cache.length - 1]
+    const block = PicoFeed.mapBlock(this.buf, descriptor.offset)
+    // Detect unindexed data between last cached block and tail
+    return block.end === this.tail
+  }
+
+  getBlock (idx) {
+    if (this._isDirty) this._reIndex()
+    const desc = this._cache[idx]
+    if (!desc) return undefined
+    return PicoFeed.mapBlock(this.buf, desc.offset, this._keychain[desc.keyId])
+  }
+
+  get (idx) {
+    if (idx < 0) throw new Error('Positive integer expected')
+    for (const { type, block } of this._index()) {
+      if (type && !idx--) return this.encoding.decode(block.body)
+    }
+    throw new Error('NotFoundError')
+  }
+
+  get lastBlock () {
+    return this.getBlock(this.length - 1)
+  }
+
+  /**
+   * returns lastBlock contents decoded with given user encoding
+   */
+  get last () {
+    const block = this.lastBlock
+    if (!block) return
+    return this.encoding.decode(block.body)
+  }
+
+  get keys () {
+    const itr = this._index()
+    function * filter () {
+      for (const { type, key } of itr) if (!type) yield key
+    }
+    return filter()
+  }
+
+  get length () {
+    let i = 0
+    for (const { type } of this._index()) if (type) i++
+    return i
+  }
+
+  // Forcefully re-index entire feed
+  _reIndex () {
+    const iterator = this._index()
+    while (!iterator.next().done) continue
   }
 
   _appendKey (data) {
@@ -61,14 +121,6 @@ module.exports = class PicoFeed {
     this._lastBlockOffset = this.tail
     this.tail += chunk.copy(this.buf, this.tail)
   }
-
-  get partial () {
-    // length triggers _index(), empty feeds are neither partial nor full.
-    if (this._hasGenisis === null && !this.length) return false
-    return !this._hasGenisis
-  }
-
-  get free () { return this._MAX_FEED_SIZE - this.tail }
 
   _ensureMinimumCapacity (size) {
     if (this.buf.length < size) {
@@ -84,33 +136,6 @@ module.exports = class PicoFeed {
       if (pk.equals(k)) return
     }
     this._appendKey(pk)
-  }
-
-  // Forcefully re-index entire feed
-  _reIndex () {
-    const iterator = this._index()
-    while (!iterator.next().done) continue
-  }
-
-  getBlock (idx) {
-    if (this._blockIdx === -1) this._reIndex()
-    const desc = this._cache[idx]
-    if (!desc) return
-
-    return PicoFeed.mapBlock(this.buf, desc.offset, this._keychain[desc.keyId])
-  }
-
-  get lastBlock () {
-    return this.getBlock(this.length - 1)
-  }
-
-  /**
-   * returns lastBlock contents decoded with given user encoding
-   */
-  get last () {
-    const block = this.lastBlock
-    if (!block) return
-    return this.encoding.decode(block.body)
   }
 
   append (data, sk, cb) {
@@ -179,7 +204,7 @@ module.exports = class PicoFeed {
     // Cache related state (Only support full-reset atm)
     this._keychain = []
     this._cache = []
-    this._blockIdx = 0
+    let blockIdx = 0
 
     const ktok = PicoFeed.KEY
     const KEY_SZ = 32
@@ -202,7 +227,7 @@ module.exports = class PicoFeed {
         if (offset + block.size > this.buf.length) return
 
         // Parent verification
-        if (!this._blockIdx) {
+        if (!blockIdx) {
           // partial feeds/slices lack the genesis block
           this._hasGenisis = block.parentSig.equals(Buffer.alloc(64))
         } else if (!prevSig.equals(block.parentSig)) {
@@ -214,7 +239,7 @@ module.exports = class PicoFeed {
         for (let i = this._keychain.length - 1; i >= 0; i--) {
           valid = block.verify(this._keychain[i])
           if (!valid) continue
-          const seq = this._blockIdx++
+          const seq = blockIdx++
           block.key = this._keychain[i]
           this._cache[seq] = { offset, keyId: i }
           yield { type: 1, seq, block, offset, key: this._keychain[i] }
@@ -225,12 +250,6 @@ module.exports = class PicoFeed {
         if (!valid) return // chain of trust broken
       }
     }
-  }
-
-  get length () {
-    let i = 0
-    for (const { type } of this._index()) if (type) i++
-    return i
   }
 
   toString () { return this.pickle() }
@@ -305,14 +324,6 @@ module.exports = class PicoFeed {
     processChunk()
   }
 
-  get (idx) {
-    if (idx < 0) throw new Error('Positive integer expected')
-    for (const { type, block } of this._index()) {
-      if (type && !idx--) return this.encoding.decode(block.body)
-    }
-    throw new Error('NotFoundError')
-  }
-
   // Truncating is a lot faster
   // than spawning a new feed.
   truncate (toLength) {
@@ -331,14 +342,6 @@ module.exports = class PicoFeed {
       } else if (toLength < 0) break
     }
     return o !== this.tail
-  }
-
-  get keys () {
-    const itr = this._index()
-    function * filter () {
-      for (const { type, key } of itr) if (!type) yield key
-    }
-    return filter()
   }
 
   blocks (slice = 0) {
@@ -460,6 +463,14 @@ module.exports = class PicoFeed {
     }
   }
 
+  clone (FeedDerivate) {
+    FeedDerivate = FeedDerivate || this.__clazz
+    const f = new FeedDerivate()
+    f.encoding = this.encoding
+    f._steal(this, true)
+    return f
+  }
+
   /* How to look at counters
    *
    * A  0  1  2  3
@@ -560,14 +571,6 @@ module.exports = class PicoFeed {
     }
   }
 
-  clone (FeedDerivate) {
-    FeedDerivate = FeedDerivate || this.__clazz
-    const f = new FeedDerivate()
-    f.encoding = this.encoding
-    f._steal(this, true)
-    return f
-  }
-
   static isFeed (other) { return other instanceof PicoFeed }
 
   static from (source, opts = {}) {
@@ -597,6 +600,13 @@ module.exports = class PicoFeed {
       }
     }
     return feed
+  }
+
+  static signPair () {
+    const sk = Buffer.allocUnsafe(crypto_sign_SECRETKEYBYTES)
+    const pk = Buffer.allocUnsafe(crypto_sign_PUBLICKEYBYTES)
+    crypto_sign_keypair(pk, sk)
+    return { sk, pk }
   }
 
   static mapBlock (buf, start = 0, key = null) {
