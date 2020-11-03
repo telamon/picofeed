@@ -224,11 +224,6 @@ chalk@^4.0.0:
     ansi-styles "^4.1.0"
     supports-color "^7.1.0"
 
-codecs@^2.0.0:
-  version "2.0.0"
-  resolved "https://registry.yarnpkg.com/codecs/-/codecs-2.0.0.tgz#680d1d4ac8ac3c8adbaa625c7ce06c6ee5792b50"
-  integrity sha512-WXvpJRAgc693oqYvZte9uYEiL5YHtfrxyEq12uVny9oBJ1k37zSva5vVz7trsnt6R9Y15hEgOSC7VFZT2pfYnA==
-
 color-convert@^1.9.0:
   version "1.9.3"
   resolved "https://registry.yarnpkg.com/color-convert/-/color-convert-1.9.3.tgz#bb71850690e1f136567de629d2d5471deda4c1e8"

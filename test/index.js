@@ -8,15 +8,15 @@ test('new feed', t => {
     t.error(err)
     t.equal(seq, 1)
   })
-  t.equal(feed.get(0), 'Hello World')
+  t.equal(feed.get(0).body.toString(), 'Hello World')
 
   t.equal(feed.append('</world>', sk), 2)
-  t.equal(feed.get(1), '</world>')
+  t.equal(feed.get(1).body.toString(), '</world>')
   const str = feed.pickle() // # => URLSAFE STRING
   // feed.on('append', (seq, msg) => { debugger })
   // feed.repickle(otherBuffer) // Merge/Comp other buffer/string, causing 'append' event to fire
   const f2 = PicoFeed.from(str)
-  t.equal(f2.get(0), 'Hello World')
+  t.equal(f2.get(0).body.toString(), 'Hello World')
   t.end()
 })
 
@@ -31,11 +31,8 @@ test('truncation', t => {
   t.equal(feed.length, 1, 'new length')
   t.equal(feed.append('are comfty', sk), 2)
 
-  // Todo: feed#blocks and feed#list() => [bdy, bdy, bdy]
-  for (const { type, block } of feed._index()) {
-    if (type) console.log(block.body.toString())
-  }
-
+  const contents = feed.toArray().map(b => b.body.toString()).join()
+  t.equal(contents, 'Hello World!,are comfty')
   t.end()
 })
 
@@ -50,10 +47,8 @@ test('empty / truncate to 0', t => {
   t.equal(feed.length, 0, 'new length')
   t.equal(feed.append('are comfty', sk), 1)
 
-  // Todo: feed#blocks and feed#list() => [bdy, bdy, bdy]
-  for (const { type, block } of feed._index()) {
-    if (type) console.log(block.body.toString())
-  }
+  const contents = feed.toArray().map(b => b.body.toString()).join()
+  t.equal(contents, 'are comfty')
   t.end()
 })
 
@@ -69,7 +64,7 @@ test('conflict detection', t => {
   b.append('B1', K0)
   b.append('B2', K0)
   t.equal(a._compare(b), 2, 'Positive when other is ahead')
-  t.equal(b.get(b.length - a._compare(b)), 'B1') // first new block
+  t.equal(b.get(b.length - a._compare(b)).body.toString(), 'B1') // first new block
 
   t.equal(b._compare(b.clone()), 0, 'Zero when in sync')
   // A part of B; Valid
@@ -137,22 +132,22 @@ test('feed#slice(n) / feed#pickle(slice: n)', t => {
   const s2 = a.slice(2)
   t.equal(s2.partial, true)
 
-  t.equal(s1.get(0), 'one') // [1, 2]
-  t.equal(s1.get(1), 'two') // [1, 2]
-  t.equal(s2.get(0), 'two') // [2]
+  t.equal(s1.get(0).body.toString(), 'one') // [1, 2]
+  t.equal(s1.get(1).body.toString(), 'two') // [1, 2]
+  t.equal(s2.get(0).body.toString(), 'two') // [2]
 
   // test bin merge full with slice
   // [0].merge([1, 2]) // [0, 1, 2]
   const c = b.clone()
 
   c.merge(s1)
-  t.equal(c.get(1), 'one')
+  t.equal(c.get(1).body.toString(), 'one')
 
   // test pickled merge full with slice
   // [0].merge([1, 2]) // [0, 1, 2]
   const d = b.clone()
   d.merge(s1.pickle())
-  t.equal(d.get(2), 'two')
+  t.equal(d.get(2).body.toString(), 'two')
 
   // [0].merge([2]) // => [0]
   const e = b.clone()
@@ -162,7 +157,7 @@ test('feed#slice(n) / feed#pickle(slice: n)', t => {
   // Test bin merge sliced with full (reverse order merge)
   // [1, 2].merge([0]) // => [0, 1, 2]
   s1.merge(b)
-  t.equal(s1.get(2), 'two')
+  t.equal(s1.get(2).body.toString(), 'two')
 
   // Final Test: merge of two slices in reverse order
   // [2].merge([1]) // => [1, 2]
@@ -173,8 +168,8 @@ test('feed#slice(n) / feed#pickle(slice: n)', t => {
   f.append('two', sk)
   const h = f.slice(2) // [2]
   h.merge(g)
-  t.equal(h.get(0), 'one')
-  t.equal(h.get(1), 'two')
+  t.equal(h.get(0).body.toString(), 'one')
+  t.equal(h.get(1).body.toString(), 'two')
   t.end()
 })
 
@@ -185,22 +180,22 @@ test('merge when empty', t => {
 
   a.append('Hello World', sk)
   b.merge(a.pickle())
-  t.equal(b.get(0), a.get(0))
+  t.equal(b.get(0).body.toString(), a.get(0).body.toString())
 
   a.append('Bye world!', sk)
   t.equal(b.length, 1)
   b.merge(a.pickle())
   t.equal(b.length, 2, 'New blocks merged')
-  t.equal(b.get(1), a.get(1))
+  t.equal(b.get(1).body.toString(), a.get(1).body.toString())
   t.end()
 })
 
 test('no contentEncoding', t => {
   const b = Buffer.from([0, 0, 1, 2, 3])
-  const f = new PicoFeed({ contentEncoding: 'binary' })
+  const f = new PicoFeed()
   const { sk } = PicoFeed.signPair()
   f.append(b, sk)
-  t.ok(b.equals(f.get(0)))
+  t.ok(b.equals(f.get(0).body))
   t.end()
 })
 
@@ -248,7 +243,7 @@ test('index state while merging', t => {
     abort()
   })
   t.equal(mutated, false) // TODO: Toggle to true when interactive conflict handling is implemented.
-  t.equal(b.last, 'Great!')
+  t.equal(b.last.body.toString(), 'Great!')
   t.end()
 })
 
@@ -302,7 +297,7 @@ test('All BlockMappers should be tagged with symbol', t => {
   const { sk } = PicoFeed.signPair()
   const a = new PicoFeed()
   a.append('First', sk)
-  t.ok(a.lastBlock[PicoFeed.BLOCK_MAPPER_SYMBOL])
+  t.ok(a.last[PicoFeed.BLOCK_MAPPER_SYMBOL])
   t.end()
 })
 
@@ -315,6 +310,6 @@ test('BlockMapper should contain key', t => {
     t.ok(block.key.equals(pk))
   }
 
-  t.ok(a.lastBlock.key.equals(pk))
+  t.ok(a.last.key.equals(pk))
   t.end()
 })

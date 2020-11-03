@@ -12,9 +12,9 @@ const {
 } = require('sodium-universal')
 /* eslint-enable camelcase */
 
-const codecs = require('codecs')
 const inspectSymbol = require('inspect-custom-symbol')
 const BLOCK_MAPPER_SYMBOL = Symbol('BlockMapper')
+
 module.exports = class PicoFeed {
   static get MAX_FEED_SIZE () { return 64 << 10 } // 64 kilo byte
   static get INITIAL_FEED_SIZE () { return 1 << 10 } // 1 kilo byte
@@ -33,9 +33,6 @@ module.exports = class PicoFeed {
     this._hasGenisis = null
     this._keychain = [] // key-cache
     this._cache = [] // block-cache
-
-    const enc = opts.contentEncoding || 'utf8'
-    this.encoding = codecs(enc === 'json' ? 'ndjson' : enc)
     this._MAX_FEED_SIZE = opts.maxSize || PicoFeed.MAX_FEED_SIZE
     this.buf = Buffer.alloc(opts.initialSize || PicoFeed.INITIAL_FEED_SIZE)
   }
@@ -63,33 +60,8 @@ module.exports = class PicoFeed {
     return this._cache.length
   }
 
-  getBlock (idx) {
-    if (this._isDirty) this._reIndex()
-    const desc = this._cache[idx]
-    if (!desc) return undefined
-    return PicoFeed.mapBlock(this.buf, desc.offset, this._keychain[desc.keyId])
-  }
-
-  get (idx) {
-    this._reIndex()
-    const block = this.getBlock(idx)
-    if (!block) debugger
-    this._reIndex()
-    if (!block) throw new Error('NotFoundError')
-    return this.encoding.decode(block.body)
-  }
-
-  get lastBlock () {
-    return this.getBlock(this.length - 1)
-  }
-
-  /**
-   * returns lastBlock contents decoded with given user encoding
-   */
   get last () {
-    const block = this.lastBlock
-    if (!block) return
-    return this.encoding.decode(block.body)
+    return this.get(this.length - 1)
   }
 
   get keys () {
@@ -131,6 +103,13 @@ module.exports = class PicoFeed {
     this._appendKey(pk)
   }
 
+  get (idx) {
+    if (this._isDirty) this._reIndex()
+    const desc = this._cache[idx]
+    if (!desc) return undefined
+    return PicoFeed.mapBlock(this.buf, desc.offset, this._keychain[desc.keyId])
+  }
+
   toArray () {
     const arr = []
     for (const block of this.blocks()) arr.push(block)
@@ -145,16 +124,17 @@ module.exports = class PicoFeed {
 
     const metaSz = PicoFeed.META_SIZE
 
-    const pBlock = this.lastBlock
+    const pBlock = this.last
 
-    const encodedMessage = this.encoding.encode(data)
-    if (!encodedMessage.length) throw new Error('Encoded data.length is 0')
-    const dN = encodedMessage.length // this.encoding.encodingLength(data)
-    const newEnd = this.tail + dN + metaSz
+    // This is the only auto-encoding that will be supported
+    if (!Buffer.isBuffer(data)) data = Buffer.from(data)
+
+    const dataSize = data.length
+    const newEnd = this.tail + dataSize + metaSz
 
     // Ensure we're not gonna pass the boundary
     if (this._MAX_FEED_SIZE < newEnd) {
-      // console.error('NOFIT', this.tail, dN, metaSz)
+      // console.error('NOFIT', this.tail, dataSize, metaSz)
       console.error(`MAX_FEED_SIZE reached, block won't fit: ${newEnd} > ${this._MAX_FEED_SIZE}`)
       const err = new Error('FeedOverflowError')
       err.type = err.message
@@ -170,12 +150,9 @@ module.exports = class PicoFeed {
     const map = PicoFeed.mapBlock(this.buf, this.tail)
 
     map.header.fill(0) // Zero out the header
-    map.size = dN
+    map.size = dataSize
 
-    // Can't use inplace encoding due to encoding.encodingLength() not
-    // being always available, have to fallback on copying.
-    // this.encoding.encode(data, map.body)
-    encodedMessage.copy(map.body)
+    data.copy(map.body)
 
     if (pBlock) { // Origin blocks are origins.
       pBlock.sig.copy(map.parentSig)
@@ -346,7 +323,7 @@ module.exports = class PicoFeed {
     }
 
     const o = this.tail
-    const block = this.getBlock(toLength - 1)
+    const block = this.get(toLength - 1)
     this.tail = block.end
     if (o === this.tail) return false
     // Truncate cache
@@ -359,7 +336,7 @@ module.exports = class PicoFeed {
     if (start < 0) start = this.length + start
     if (!end) end = this.length
     if (end < 0) end = this.length + end + 1
-    while (start < end) yield this.getBlock(start++)
+    while (start < end) yield this.get(start++)
     /*
     const itr = this._index()
     function * filter () {
@@ -480,7 +457,6 @@ module.exports = class PicoFeed {
   clone (FeedDerivate) {
     FeedDerivate = FeedDerivate || this.__clazz
     const f = new FeedDerivate()
-    f.encoding = this.encoding
     f._steal(this, true)
     return f
   }

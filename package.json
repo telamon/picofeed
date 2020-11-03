@@ -15,7 +15,6 @@
     "prepublishOnly": "standard && npm test"
   },
   "dependencies": {
-    "codecs": "^2.0.0",
     "inspect-custom-symbol": "^1.1.1",
     "sodium-universal": "^3.0.2"
   },
