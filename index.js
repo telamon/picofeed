@@ -410,7 +410,7 @@ module.exports = class PicoFeed {
         mutated = true
       }
       return mutated
-   }
+    }
 
     // If we're empty then we'll just use theirs
     if (!this.length) {

@@ -1,8 +1,8 @@
-[`pure | 📦`](https://github.com/telamon/create-pure)
-[`code style | standard`](https://standardjs.com/)
 # picofeed
 
-[![JavaScript Style Guide](https://img.shields.io/badge/code_style-standard-brightgreen.svg)](https://standardjs.com)
+[`pure | 📦`](https://github.com/telamon/create-pure)
+[`code style | standard`](https://standardjs.com/)
+
 
 > Microscopic Secure Feed occupying a single buffer
 
