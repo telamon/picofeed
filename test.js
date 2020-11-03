@@ -1,5 +1,5 @@
 const test = require('tape')
-const PicoFeed = require('..')
+const PicoFeed = require('.')
 
 test('new feed', t => {
   const feed = new PicoFeed()
@@ -12,6 +12,7 @@ test('new feed', t => {
 
   t.equal(feed.append('</world>', sk), 2)
   t.equal(feed.get(1).body.toString(), '</world>')
+  debugger
   const str = feed.pickle() // # => URLSAFE STRING
   // feed.on('append', (seq, msg) => { debugger })
   // feed.repickle(otherBuffer) // Merge/Comp other buffer/string, causing 'append' event to fire

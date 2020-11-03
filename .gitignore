@@ -1,4 +1,9 @@
-package-lock.json
-yarn-debug.log*
-yarn-error.log*
-node_modules/
+# Reverse policy .gitignore
+*
+!README.md
+!LICENSE
+!package.json
+!index.js
+!test.js
+!.editorconfig
+!.gitignore

@@ -9,8 +9,8 @@
     "index.js"
   ],
   "scripts": {
-    "test": "tape test/*.js",
-    "debug": "node inspect $(npm bin)/tape test/*.js",
+    "test": "tape test.js",
+    "debug": "node inspect $(npm bin)/tape test.js",
     "lint": "standard",
     "prepublishOnly": "standard && npm test"
   },
