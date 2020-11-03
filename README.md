@@ -85,6 +85,8 @@ X.merge(Z) // => true; X contains ['Alpha', 'Bravo', 'Charlie']
 ```
 
 ## Changelog
+#### `3.1.0`
+- added `feed.merge(block)` support
 #### `3.0.0`
 - removed automatic encodings
 - changed `feed.get(n)` returns instance of BlockMapper.
