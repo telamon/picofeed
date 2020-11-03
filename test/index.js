@@ -1,5 +1,6 @@
 const test = require('tape')
 const PicoFeed = require('..')
+
 test('new feed', t => {
   const feed = new PicoFeed()
   const { sk } = PicoFeed.signPair()
@@ -276,5 +277,13 @@ test('Interactive ff empty', t => {
   a.append('First', sk)
   a.append('Second', sk)
   new PicoFeed().merge(a, ({ entry }) => t.pass(entry))
+  t.end()
+})
+
+test('All BlockMappers should be tagged with symbol', t => {
+  const { sk } = PicoFeed.signPair()
+  const a = new PicoFeed()
+  a.append('First', sk)
+  t.ok(a.lastBlock[PicoFeed.BLOCK_MAPPER_SYMBOL])
   t.end()
 })
