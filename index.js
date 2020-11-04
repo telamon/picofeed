@@ -567,7 +567,7 @@ module.exports = class PicoFeed {
     }
   }
 
-  static isFeed (other) { return other[FEED_SYMBOL] || other instanceof PicoFeed }
+  static isFeed (other) { return other && other[FEED_SYMBOL] }
 
   static from (source, opts = {}) {
     // If URL; pick the hash
