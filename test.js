@@ -298,7 +298,7 @@ test('All BlockMappers should be tagged with symbol', t => {
   const { sk } = PicoFeed.signPair()
   const a = new PicoFeed()
   a.append('First', sk)
-  t.ok(a.last[PicoFeed.BLOCK_MAPPER_SYMBOL])
+  t.ok(a.last[PicoFeed.BLOCK_SYMBOL])
   t.end()
 })
 

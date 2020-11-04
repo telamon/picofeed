@@ -13,7 +13,11 @@ const {
 /* eslint-enable camelcase */
 
 const inspectSymbol = require('inspect-custom-symbol')
-const BLOCK_MAPPER_SYMBOL = Symbol('BlockMapper')
+// Using global symbols here might be unecessary
+// but feeds created in ancestors of picofeed dependents evaulate:
+// (feed instanceof PicoFeed) as false..
+const BLOCK_SYMBOL = Symbol.for('Pico::block')
+const FEED_SYMBOL = Symbol.for('Pico::feed')
 
 module.exports = class PicoFeed {
   static get MAX_FEED_SIZE () { return 64 << 10 } // 64 kilo byte
@@ -26,9 +30,11 @@ module.exports = class PicoFeed {
   static get SIGNATURE_SIZE () { return crypto_sign_BYTES } // eslint-disable-line camelcase
   static get COUNTER_SIZE () { return 4 } // Sizeof UInt32BE
   static get META_SIZE () { return PicoFeed.SIGNATURE_SIZE * 2 + PicoFeed.COUNTER_SIZE }
-  static get BLOCK_MAPPER_SYMBOL () { return BLOCK_MAPPER_SYMBOL }
+  static get BLOCK_SYMBOL () { return BLOCK_SYMBOL }
+  static get FEED_SYMBOL () { return FEED_SYMBOL }
 
   constructor (opts = {}) {
+    this[FEED_SYMBOL] = true
     this.tail = 0 // Tail always points to next empty space
     this._hasGenisis = null
     this._keychain = [] // key-cache
@@ -561,7 +567,7 @@ module.exports = class PicoFeed {
     }
   }
 
-  static isFeed (other) { return other instanceof PicoFeed }
+  static isFeed (other) { return other[FEED_SYMBOL] || other instanceof PicoFeed }
 
   static from (source, opts = {}) {
     // If URL; pick the hash
@@ -571,7 +577,7 @@ module.exports = class PicoFeed {
     const feed = sif ? source : new PicoFeed(opts)
     if (!sif) {
       // Upgrade a single mapped block into a feed
-      if (source[BLOCK_MAPPER_SYMBOL]) {
+      if (source[BLOCK_SYMBOL]) {
         feed._ensureKey(source.key)
         feed._appendBlock(source.buffer)
 
@@ -617,7 +623,7 @@ module.exports = class PicoFeed {
     const COUNT_N = PicoFeed.COUNTER_SIZE
     const HDR_N = SIG_N + COUNT_N
     const mapper = {
-      [BLOCK_MAPPER_SYMBOL]: true,
+      [BLOCK_SYMBOL]: true,
       get start () { return start },
       get sig () { return buf.subarray(start, start + SIG_N) },
       get header () { return buf.subarray(start + SIG_N, start + SIG_N + HDR_N) },
