@@ -616,7 +616,7 @@ module.exports = class PicoFeed {
 
       // We're not handling raw block buffers because you'd need to provide
       // the tail and _lastBlockOffset in order to iterate them.
-    }
+    } else throw new Error('NotAFeed')
     return feed
   }
 
