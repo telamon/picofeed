@@ -326,3 +326,13 @@ test('Merge should accept BlockMapper', t => {
   t.equal(b.length, a.length)
   t.end()
 })
+
+test('inspect() should print awesome table', t => {
+  const { pk, sk } = PicoFeed.signPair()
+  const f = new PicoFeed()
+  f.append('Hello World', sk)
+  f.append([0xfe, 0xed, 0xba, 0xbe, 0xde, 0xad, 0xbe, 0xef], sk)
+  f.append(pk, sk)
+  f.inspect()
+  t.end()
+})

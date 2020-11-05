@@ -567,6 +567,31 @@ module.exports = class PicoFeed {
     }
   }
 
+  inspect (noLog = false) {
+    const header = ['key', 'sig', 'parent', 'hex', 'utf8']
+    const table = []
+    const empty = Buffer.alloc(PicoFeed.SIGNATURE_SIZE).fill(0)
+    for (const block of this.blocks()) {
+      table.push([
+        block.key.slice(0, 2).toString('hex'),
+        block.sig.slice(0, 4).toString('hex'),
+        block.parentSig.equals(empty)
+          ? '_GENESIS'
+          : block.parentSig.slice(0, 4).toString('hex'),
+        block.body.slice(0, 8).toString('hex'),
+        block.body.slice(0, 8).toString('utf8')
+      ])
+    }
+    const keyedTable = table.map(row =>
+      row.reduce((o, c, i) => {
+        o[header[i]] = c
+        return o
+      }, {})
+    )
+    if (!noLog) console.table(keyedTable, header)
+    return table
+  }
+
   static isFeed (other) { return other && other[FEED_SYMBOL] }
 
   static from (source, opts = {}) {
