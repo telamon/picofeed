@@ -570,29 +570,27 @@ module.exports = class PicoFeed {
   static isFeed (other) { return other && other[FEED_SYMBOL] }
 
   static from (source, opts = {}) {
-    // If URL; pick the hash
-    // if string pick the string,
-    // if another buffer.. interersting.
-    const sif = PicoFeed.isFeed(source)
-    const feed = sif ? source : new PicoFeed(opts)
-    if (!sif) {
-      // Upgrade a single mapped block into a feed
-      if (source[BLOCK_SYMBOL]) {
-        feed._ensureKey(source.key)
-        feed._appendBlock(source.buffer)
+    // Warn, feeds are not cloned same way as Buffer.from(aBuffer) produces a copy
+    if (PicoFeed.isFeed(source)) return source
+
+    const feed = new PicoFeed(opts)
+
+    // Upgrade a single mapped block into a feed
+    if (source[BLOCK_SYMBOL]) {
+      feed._ensureKey(source.key)
+      feed._appendBlock(source.buffer)
 
       // Load string
-      } else if (typeof source === 'string') feed._unpack(source)
-      // Load URL
-      else if (typeof source.hash === 'string') feed._unpack(source.hash)
-      // Load buffers
-      else if (Buffer.isBuffer(source)) {
-        // Assume buffer contains output from feed.pickle()
-        feed._unpack(source.toString('utf8'))
+    } else if (typeof source === 'string') feed._unpack(source)
+    // Load URL
+    else if (typeof source.hash === 'string') feed._unpack(source.hash)
+    // Load buffers
+    else if (Buffer.isBuffer(source)) {
+      // Assume buffer contains output from feed.pickle()
+      feed._unpack(source.toString('utf8'))
 
-        // We're not handling raw block buffers because you'd need to provide
-        // the tail and _lastBlockOffset in order to iterate them.
-      }
+      // We're not handling raw block buffers because you'd need to provide
+      // the tail and _lastBlockOffset in order to iterate them.
     }
     return feed
   }
