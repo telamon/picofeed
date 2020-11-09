@@ -85,6 +85,9 @@ X.merge(Z) // => true; X contains ['Alpha', 'Bravo', 'Charlie']
 ```
 
 ## Changelog
+#### `3.2.2`
+- optimization feed._steal() also steals cache
+
 #### `3.2.1`
 - fixed bug feed._steal(other) causing cache corruption
 - changed return value of feed.inspect() is now conditional

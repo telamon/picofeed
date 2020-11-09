@@ -352,18 +352,25 @@ module.exports = class PicoFeed {
     return filter() */
   }
 
+  /*
+   * Steals the state of other feed,
+   * once a feed has been pilfered it should not be used
+   * anymore. This method is only used internally as an optimization
+   * for "theirs" merge strategy to avoid re-indexing
+   */
   _steal (other, copy = false) {
     if (copy) {
       this.buf = Buffer.alloc(other.buf.length)
       other.buf.copy(this.buf)
+      this._cache = other._cache.map(desc => ({ ...desc })) // Clone descriptors
     } else {
       this.buf = other.buf
+      this._cache = [...other._cache] // Steal descriptors
     }
+    this._keychain = [...other._keychain] // Steal keys
+    this._hasGenisis = other._hasGenisis
     this.tail = other.tail
-    this._clearCache()
-    // TODO: optimization to avoid signature checks already done in other
-    // this._keychain = [...other._keychain]
-    // this._cache = [...other._cache]
+    other._robbed = true // earmark other feed for debugging
     return true
   }
 
