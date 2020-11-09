@@ -336,3 +336,35 @@ test('inspect() should print awesome table', t => {
   f.inspect()
   t.end()
 })
+
+test('cached keychain should not contain duplicate keys', t => {
+  const { pk, sk } = PicoFeed.signPair()
+  const a = new PicoFeed()
+  a.append('alpha', sk)
+  a.append('beta', sk)
+  a.append('gamma', sk)
+  const b = new PicoFeed()
+  for (const block of a.blocks()) b.merge(block)
+  t.equal(b.keys.length, 1)
+  t.ok(pk.equals(b.keys[0]))
+  t.end()
+})
+
+test('Interactive reversemerge', t => {
+  t.plan(5)
+  const { sk } = PicoFeed.signPair()
+  const a = new PicoFeed()
+  a.append('alpha', sk)
+  a.append('beta', sk)
+  a.append('gamma', sk)
+  const base = a.slice(1)
+  const other = a.get(0)
+  let i = 0
+  const merged = base.merge(other, block => {
+    // The callback should be invoked from first to last block of real history
+    t.equals(block.sig.hexSlice(0, 6), a.get(i++).sig.hexSlice(0, 6))
+  })
+  t.ok(merged)
+  t.equal(base.length, 3)
+  t.end()
+})

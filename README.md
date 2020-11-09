@@ -85,8 +85,15 @@ X.merge(Z) // => true; X contains ['Alpha', 'Bravo', 'Charlie']
 ```
 
 ## Changelog
+#### `3.2.1`
+- fixed bug feed._steal(other) causing cache corruption
+- changed return value of feed.inspect() is now conditional
+- fixed bug where A < B; A.merge(B, withCallback) did not merge
+- fixed bug where keychain cache contained boatloads of duplicate keys
+
 #### `3.1.0`
 - added `feed.merge(block)` support
+
 #### `3.0.0`
 - removed automatic encodings
 - changed `feed.get(n)` returns instance of BlockMapper.

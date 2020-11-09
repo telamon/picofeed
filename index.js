@@ -184,10 +184,7 @@ module.exports = class PicoFeed {
     let blockIdx = 0
 
     // Reset caches
-    if (clearCache) {
-      this._keychain = []
-      this._cache = []
-    }
+    if (clearCache) this._clearCache()
 
     const ktok = PicoFeed.KEY
     const KEY_SZ = 32
@@ -201,8 +198,12 @@ module.exports = class PicoFeed {
 
       if (isKey) {
         const key = this.buf.slice(offset + ktok.length, offset + ktok.length + KEY_SZ)
-        yield { type: 0, id: this._keychain.length, key: key, offset }
-        this._keychain.push(key)
+        let keyIdx = this._keychain.findIndex(k => k.equals(key))
+        if (!~keyIdx) { // Append key to chain if missing
+          keyIdx = this._keychain.length
+          this._keychain.push(key)
+        }
+        yield { type: 0, id: keyIdx, key: key, offset }
         offset += ktok.length + KEY_SZ
       } else if (this._cache[blockIdx] && this._cache[blockIdx].offset === offset) {
         // Load block from cache
@@ -294,7 +295,7 @@ module.exports = class PicoFeed {
         if (!type) { // Unpack Public Sign Key
           const key = ub2b(chunk)
           if (key.length !== 32) throw new Error('PSIG key wrong size: ')
-          this._appendKey(key) // modifies tail
+          this._ensureKey(key) // modifies tail
         } else { // Unpack Block
           this._appendBlock(ub2b(chunk))
         }
@@ -359,10 +360,16 @@ module.exports = class PicoFeed {
       this.buf = other.buf
     }
     this.tail = other.tail
+    this._clearCache()
     // TODO: optimization to avoid signature checks already done in other
     // this._keychain = [...other._keychain]
     // this._cache = [...other._cache]
     return true
+  }
+
+  _clearCache () {
+    this._keychain = []
+    this._cache = []
   }
 
   // little bit of meta-programming, that probably can be avoided.
@@ -428,10 +435,14 @@ module.exports = class PicoFeed {
       if (this._reverseMergeFlag) return false
       const c = other.clone() // Avoid mutating other
       c._reverseMergeFlag = true // Prevent loops without poisoning the state.
-
-      if (c.merge(this, options, indexCallback)) { // Success, steal buffer
-        if (!interactiveMode) return this._steal(c)
-        else return rebase(other.blocks())
+      const sanityCheck = c.length
+      const firstBlockAccepted = !interactiveMode || !userValidate(c.get(0))
+      if (
+        firstBlockAccepted &&
+        c.merge(this, options, indexCallback)
+      ) { // Success, steal buffer
+        if (sanityCheck === c.length) throw new Error('InternalError:NothingMerged')
+        return this._steal(c)
       } else return false // Give up
     }
 
@@ -589,7 +600,7 @@ module.exports = class PicoFeed {
       }, {})
     )
     if (!noLog) console.table(keyedTable, header)
-    return table
+    else return table
   }
 
   static isFeed (other) { return other && other[FEED_SYMBOL] }
