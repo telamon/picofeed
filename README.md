@@ -85,6 +85,13 @@ X.merge(Z) // => true; X contains ['Alpha', 'Bravo', 'Charlie']
 ```
 
 ## Changelog
+#### `3.3.0`
+- added Feed.first
+- added Feed.get(-3) as equivalent of f.get(f.length - 3)
+- added Block.isGenesis getter
+- added static Feed.KEY_SIZE constant
+- replaced hardcoded key-size lenghts with KEY_SIZE constant
+
 #### `3.2.2`
 - optimization feed._steal() also steals cache
 

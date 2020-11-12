@@ -19,6 +19,8 @@ const inspectSymbol = require('inspect-custom-symbol')
 const BLOCK_SYMBOL = Symbol.for('Pico::block')
 const FEED_SYMBOL = Symbol.for('Pico::feed')
 
+const GENESIS = Buffer.alloc(crypto_sign_BYTES).fill(0)
+
 module.exports = class PicoFeed {
   static get MAX_FEED_SIZE () { return 64 << 10 } // 64 kilo byte
   static get INITIAL_FEED_SIZE () { return 1 << 10 } // 1 kilo byte
@@ -27,6 +29,7 @@ module.exports = class PicoFeed {
   // consensus? pft! whoever can fit the most kittens into
   // a single bottle is obviously the winner.
   static get BLOCK () { return Buffer.from('B0.') } // Buffer.from('🐈', 'utf8') }
+  static get KEY_SIZE () { return crypto_sign_PUBLICKEYBYTES } // eslint-disable-line camelcase
   static get SIGNATURE_SIZE () { return crypto_sign_BYTES } // eslint-disable-line camelcase
   static get COUNTER_SIZE () { return 4 } // Sizeof UInt32BE
   static get META_SIZE () { return PicoFeed.SIGNATURE_SIZE * 2 + PicoFeed.COUNTER_SIZE }
@@ -66,9 +69,8 @@ module.exports = class PicoFeed {
     return this._cache.length
   }
 
-  get last () {
-    return this.get(this.length - 1)
-  }
+  get last () { return this.get(this.length - 1) }
+  get first () { return this.get(0) }
 
   get keys () {
     this._reIndex()
@@ -111,6 +113,7 @@ module.exports = class PicoFeed {
 
   get (idx) {
     if (this._isDirty) this._reIndex()
+    if (idx < 0) idx = this.length + idx
     const desc = this._cache[idx]
     if (!desc) return undefined
     return PicoFeed.mapBlock(this.buf, desc.offset, this._keychain[desc.keyId])
@@ -125,7 +128,7 @@ module.exports = class PicoFeed {
   append (data, sk, cb) {
     if (!sk) throw new Error('Can\'t append without a signing secret')
     if (sk.length !== 64) throw new Error('Unknown signature secret key format')
-    const pk = sk.slice(32) // this is a libsodium thing
+    const pk = sk.slice(PicoFeed.KEY_SIZE) // this is a libsodium thing
     this._ensureKey(pk)
 
     const metaSz = PicoFeed.META_SIZE
@@ -176,8 +179,7 @@ module.exports = class PicoFeed {
 
   /* This generator is pretty magic,
    * we're traversing the buffer and validating it
-   * in one sweep. For optimization, properties
-   * like length could be cached using a dirty flag.
+   * in one sweep.
    */
   * _index (clearCache = false) {
     let offset = 0
@@ -187,7 +189,7 @@ module.exports = class PicoFeed {
     if (clearCache) this._clearCache()
 
     const ktok = PicoFeed.KEY
-    const KEY_SZ = 32
+    const KEY_SZ = PicoFeed.KEY_SIZE
     // vars for block parsing
     let prevSig = null
     while (true) {
@@ -294,7 +296,7 @@ module.exports = class PicoFeed {
         const chunk = decodeURIComponent(str.substr(start, o - start - bM - kM + 1))
         if (!type) { // Unpack Public Sign Key
           const key = ub2b(chunk)
-          if (key.length !== 32) throw new Error('PSIG key wrong size: ')
+          if (key.length !== PicoFeed.KEY_SIZE) throw new Error('PSIG key wrong size: ')
           this._ensureKey(key) // modifies tail
         } else { // Unpack Block
           this._appendBlock(ub2b(chunk))
@@ -588,12 +590,11 @@ module.exports = class PicoFeed {
   inspect (noLog = false) {
     const header = ['key', 'sig', 'parent', 'hex', 'utf8']
     const table = []
-    const empty = Buffer.alloc(PicoFeed.SIGNATURE_SIZE).fill(0)
     for (const block of this.blocks()) {
       table.push([
         block.key.slice(0, 2).toString('hex'),
         block.sig.slice(0, 4).toString('hex'),
-        block.parentSig.equals(empty)
+        block.isGenesis
           ? '_GENESIS'
           : block.parentSig.slice(0, 4).toString('hex'),
         block.body.slice(0, 8).toString('hex'),
@@ -707,6 +708,10 @@ module.exports = class PicoFeed {
         // Key is an experimental feature, fail-fast for now.
         if (key) throw new Error('InternalError:KeyExists')
         key = pk
+      },
+
+      get isGenesis () {
+        return GENESIS.equals(mapper.parentSig)
       },
 
       [inspectSymbol] () {

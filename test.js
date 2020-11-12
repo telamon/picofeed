@@ -368,3 +368,26 @@ test('Interactive reversemerge', t => {
   t.equal(base.length, 3)
   t.end()
 })
+
+test('block.isGenesis getter', t => {
+  const { sk } = PicoFeed.signPair()
+  const a = new PicoFeed()
+  a.append('alpha', sk)
+  a.append('beta', sk)
+  t.ok(a.get(0).isGenesis)
+  t.notOk(a.get(1).isGenesis)
+  t.end()
+})
+
+test('Feed.get(-2), Feed.first', t => {
+  const { sk } = PicoFeed.signPair()
+  const a = new PicoFeed()
+  a.append('0', sk)
+  a.append('1', sk)
+  a.append('2', sk)
+  a.append('3', sk)
+  a.append('4', sk)
+  t.equal(a.first.body.toString(), '0')
+  t.equal(a.get(-2).body.toString(), '3')
+  t.end()
+})
