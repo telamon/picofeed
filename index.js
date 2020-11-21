@@ -602,12 +602,12 @@ module.exports = class PicoFeed {
           ? '_GENESIS'
           : block.parentSig.slice(0, 4).toString('hex'),
         block.body.slice(0, 6)
-          .toString('hex', 2)
+          .toString('hex')
           .replace(/(.{2})/g, '$1 ')
           .trimEnd(),
-
         utf
       ]
+
       // All columns are static width except last utf8
       for (let i = 0; i < row.length; i++) {
         widths[i] = Math.max(widths[i] || 0, row[i].length)
