@@ -588,27 +588,40 @@ module.exports = class PicoFeed {
   }
 
   inspect (noLog = false) {
-    const header = ['key', 'sig', 'parent', 'hex', 'utf8']
-    const table = []
+    const header = ['ID', 'KEY', 'SIG', 'PARENT', 'HEX', 'ASCII']
+    const table = [header]
+    const widths = [2]
+    let blockIdx = 0
     for (const block of this.blocks()) {
-      table.push([
+      const utf = block.body.slice(0, 12).toString('utf8')
+      const row = [
+        '' + (blockIdx++),
         block.key.slice(0, 2).toString('hex'),
         block.sig.slice(0, 4).toString('hex'),
         block.isGenesis
           ? '_GENESIS'
           : block.parentSig.slice(0, 4).toString('hex'),
-        block.body.slice(0, 8).toString('hex'),
-        block.body.slice(0, 8).toString('utf8')
-      ])
+        block.body.slice(0, 6)
+          .toString('hex', 2)
+          .replace(/(.{2})/g, '$1 ')
+          .trimEnd(),
+
+        utf
+      ]
+      // All columns are static width except last utf8
+      for (let i = 0; i < row.length; i++) {
+        widths[i] = Math.max(widths[i] || 0, row[i].length)
+      }
+      table.push(row)
     }
-    const keyedTable = table.map(row =>
-      row.reduce((o, c, i) => {
-        o[header[i]] = c
-        return o
-      }, {})
-    )
-    if (!noLog) console.table(keyedTable, header)
-    else return table
+
+    const lines = []
+    for (const row of table) {
+      lines.push('│ ' + row.map((cell, i) => cell.padEnd(widths[i])).join(' │ ') + ' │')
+    }
+    lines.splice(1, 0, '├'.padEnd(lines[0].length - 1, '─') + '┤')
+    if (!noLog) console.log(lines.join('\n'))
+    else return lines.join('\n')
   }
 
   static isFeed (other) { return other && other[FEED_SYMBOL] }
