@@ -35,6 +35,7 @@ module.exports = class PicoFeed {
   static get META_SIZE () { return PicoFeed.SIGNATURE_SIZE * 2 + PicoFeed.COUNTER_SIZE }
   static get BLOCK_SYMBOL () { return BLOCK_SYMBOL }
   static get FEED_SYMBOL () { return FEED_SYMBOL }
+  static get GENESIS () { return GENESIS }
 
   constructor (opts = {}) {
     this[FEED_SYMBOL] = true
@@ -566,7 +567,7 @@ module.exports = class PicoFeed {
     if (!blocks[A].sig.equals(blocks[B].sig)) throw mkErr('BlockConflict')
 
     // common parent found!
-    if (counters[B] !== counters[A]) console.info('B is a slice of a pickle') // TODO
+    // if (counters[B] !== counters[A]) console.info('B is a slice of a pickle') // TODO: what?
 
     // 2. lockstep the iterators while checking for conflicts.
     while (1) {
