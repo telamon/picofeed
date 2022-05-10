@@ -40,11 +40,11 @@ const url = 'http://myapp.tld/#' + feed.pickle()
 
 // share the url
 
-const remoteFeed = new Pico.from(url)
+const remoteFeed = Pico.from(url)
 remoteFeed.get(0) // => 'Hello'
 
 // Attach a block to feed
-remoteFeed.append('Hey alice!', sk)
+remoteFeed.append('Hey alice!', bob.sk)
 
 // share second URL containing 2 blocks from 2 different identities.
 const url2 = 'http://myapp.tld/#' + remoteFeed.pickle()
