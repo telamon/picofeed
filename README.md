@@ -141,11 +141,7 @@ I will from now on provide documentation relational to project activity.
  |  - Fork off & help document <3                  |
  |.________________________________________________|
 
-I publish all of my work as Libre software and will continue to do so,
-drop me a penny at Patreon to help fund experiments like these.
-
-Discord: https://discord.gg/tJhmxqX
-Patreon: https://www.patreon.com/decentlabs
+Discord: https://discord.gg/8RMRUPZ9RS
 ```
 
 ## Contributing
