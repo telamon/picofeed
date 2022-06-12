@@ -391,3 +391,54 @@ test('Feed.get(-2), Feed.first', t => {
   t.equal(a.get(-2).body.toString(), '3')
   t.end()
 })
+
+test.only('Optimization; sig-verification is slow when merge long chains', t => {
+  const { sk } = PicoFeed.signPair()
+  const f = new PicoFeed()
+  const b = Buffer.alloc(4)
+  const performance = global.performance
+  performance.mark('init')
+  for (let i = 0; i < 302; i++) {
+    b.writeUInt32BE(i)
+    f.append(b, sk)
+  }
+
+  console.log(performance.measure('init', 'init'))
+  const blocks = Array.from(f.blocks()) // detach blocks
+  const fb = new PicoFeed()
+  performance.mark('rebuild')
+  for (const block of blocks) {
+    fb.merge(block)
+  }
+  const perf0 = performance.measure('rebuild', 'rebuild')
+  console.log(perf0)
+
+  // Attempt rebuild raw buffer from blocks and then do single verify.
+  performance.mark('rebuild-raw')
+  const keys = {} // Unique public keys in feed
+  let blocksSum = 0
+  // phase 1. collect keys && sizeof blocks
+  for (const block of blocks) {
+    blocksSum += block.size // Sizeof body
+    keys[block.key.toString('hex')] = 1
+  }
+
+  const refeed = new PicoFeed()
+  // pre-allocate buffer to hold blocks
+  const size = Object.keys(keys).length * (PicoFeed.KEY_SIZE + PicoFeed.KEY.length) +
+    blocks.length * PicoFeed.META_SIZE +
+    blocksSum
+  refeed.buf = Buffer.alloc(size)
+  // phase 2: reconstruct
+  for (const block of blocks) {
+    if (keys[block.key.toString('hex')] < 2) {
+      refeed._appendKey(block.key)
+    }
+    refeed._appendBlock(block.buffer)
+  }
+  refeed._reIndex(true)
+  const perf1 = performance.measure('rebuild-raw', 'rebuild-raw')
+  console.log(perf1)
+  console.log(`Feed.fromBlockArray() vs. Feed.merge(block) boost: ${(perf0.duration / perf1.duration).toFixed()}x`)
+  t.end()
+})

@@ -347,12 +347,6 @@ module.exports = class PicoFeed {
     if (!end) end = this.length
     if (end < 0) end = this.length + end + 1
     while (start < end) yield this.get(start++)
-    /*
-    const itr = this._index()
-    function * filter () {
-      for (const entry of itr) if (entry.type && --slice < 0) yield entry
-    }
-    return filter() */
   }
 
   /*
@@ -382,11 +376,6 @@ module.exports = class PicoFeed {
     this._cache = []
   }
 
-  // little bit of meta-programming, that probably can be avoided.
-  get __clazz () {
-    return Object.getPrototypeOf(this).constructor
-  }
-
   /*
    * This method is going to need a docs page of it's own..
    * The fastest way to merge a temporary feed into an empty feed is to steal the
@@ -404,7 +393,7 @@ module.exports = class PicoFeed {
     if (typeof options === 'function') return this.merge(source, undefined, options)
     const forceCopy = options.forceCopy || false
     if (!source) throw new Error('First argument `source` expected by merge')
-    const other = this.__clazz.from(source)
+    const other = PicoFeed.from(source)
 
     // Prepare user index/validator
     const interactiveMode = typeof indexCallback === 'function'
@@ -481,9 +470,8 @@ module.exports = class PicoFeed {
     }
   }
 
-  clone (FeedDerivate) {
-    FeedDerivate = FeedDerivate || this.__clazz
-    const f = new FeedDerivate()
+  clone () {
+    const f = new PicoFeed()
     f._steal(this, true)
     return f
   }
@@ -707,7 +695,6 @@ module.exports = class PicoFeed {
       },
       // get _unsafeNext () { return PicoFeed.mapBlock(buf, mapper.end) },
       get next () { return PicoFeed.mapBlock(buf, mapper.safeEnd) },
-
       verify (pk) {
         return crypto_sign_verify_detached(mapper.sig, mapper.dat, pk)
       },
