@@ -631,7 +631,7 @@ module.exports = class PicoFeed {
     // Load URL
     else if (typeof source.hash === 'string') feed._unpack(source.hash)
     // Load buffers
-    else if (Buffer.isBuffer(source)) {
+    else if (Buffer.isBuffer(source)) { // @Deprecated
       // Assume buffer contains output from feed.pickle()
       feed._unpack(source.toString('utf8'))
 
@@ -639,6 +639,45 @@ module.exports = class PicoFeed {
       // the tail and _lastBlockOffset in order to iterate them.
     } else throw new Error('NotAFeed')
     return feed
+  }
+
+  /**
+   * This is a fast alternative to reconstruct a Feed from
+   * Array of blocks as is used by PicoRepo.
+   * It reconstructs the buffer first and then indexes the feed once.
+   *
+   * params:
+   *  - blocks: Block[]
+   */
+  static fromBlockArray (blocks) {
+    if (!Array.isArray(blocks)) throw new Error('fromBlockArray() expects an Array of blocks')
+    // Attempt rebuild raw buffer from blocks and then do single verify.
+    const keys = {} // Unique public keys in feed
+    let bodySize = 0
+    // phase 1. collect keys && sizeof blocks
+    for (const block of blocks) {
+      bodySize += block.size // Sizeof body
+      keys[block.key.toString('hex')] = 1
+    }
+
+    const f = new PicoFeed()
+
+    // pre-allocate buffer to hold blocks
+    const size = Object.keys(keys).length * (PicoFeed.KEY_SIZE + PicoFeed.KEY.length) +
+      blocks.length * PicoFeed.META_SIZE +
+      bodySize
+
+    f.buf = Buffer.alloc(size)
+
+    // phase 2: reconstruct
+    for (const block of blocks) {
+      if (keys[block.key.toString('hex')] < 2) {
+        f._appendKey(block.key)
+      }
+      f._appendBlock(block.buffer)
+    }
+    f._reIndex(true)
+    return f
   }
 
   static signPair () {
