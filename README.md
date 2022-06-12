@@ -40,11 +40,11 @@ const url = 'http://myapp.tld/#' + feed.pickle()
 
 // share the url
 
-const remoteFeed = new Pico.from(url)
+const remoteFeed = Pico.from(url)
 remoteFeed.get(0) // => 'Hello'
 
 // Attach a block to feed
-remoteFeed.append('Hey alice!', sk)
+remoteFeed.append('Hey alice!', bob.sk)
 
 // share second URL containing 2 blocks from 2 different identities.
 const url2 = 'http://myapp.tld/#' + remoteFeed.pickle()
@@ -141,11 +141,7 @@ I will from now on provide documentation relational to project activity.
  |  - Fork off & help document <3                  |
  |.________________________________________________|
 
-I publish all of my work as Libre software and will continue to do so,
-drop me a penny at Patreon to help fund experiments like these.
-
-Discord: https://discord.gg/tJhmxqX
-Patreon: https://www.patreon.com/decentlabs
+Discord: https://discord.gg/8RMRUPZ9RS
 ```
 
 ## Contributing
