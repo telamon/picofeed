@@ -85,6 +85,10 @@ X.merge(Z) // => true; X contains ['Alpha', 'Bravo', 'Charlie']
 ```
 
 ## Changelog
+#### `3.4.0`
+- added Feed.fromBlocksArray(Block[]) to perform bulk-merge, 24x perf increase compared to Feed.merge(block)
+- removed Feed subclassing/metaprogramming support, it was fun but footgun (don't solve problems by subclassing Feed).
+
 #### `3.3.0`
 - added Feed.first
 - added Feed.get(-3) as equivalent of f.get(f.length - 3)
