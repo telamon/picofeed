@@ -708,9 +708,9 @@ module.exports = class PicoFeed {
     const mapper = {
       [BLOCK_SYMBOL]: true,
       get start () { return start },
-      get sig () { return buf.subarray(start, start + SIG_N) },
-      get header () { return buf.subarray(start + SIG_N, start + SIG_N + HDR_N) },
-      get parentSig () { return buf.subarray(start + SIG_N, start + SIG_N + SIG_N) },
+      get sig () { return buf.slice(start, start + SIG_N) },
+      get header () { return buf.slice(start + SIG_N, start + SIG_N + HDR_N) },
+      get parentSig () { return buf.slice(start + SIG_N, start + SIG_N + SIG_N) },
 
       // Unsafe size read, use validateRead to ensure that you're reading a block.
       get size () { return buf.readUInt32BE(start + SIG_N * 2) },
@@ -719,10 +719,10 @@ module.exports = class PicoFeed {
         return buf.writeUInt32BE(v, start + SIG_N * 2)
       },
       get body () {
-        return buf.subarray(start + SIG_N + HDR_N, mapper.safeEnd)
+        return buf.slice(start + SIG_N + HDR_N, mapper.safeEnd)
       },
       get dat () {
-        return buf.subarray(start + SIG_N, mapper.safeEnd)
+        return buf.slice(start + SIG_N, mapper.safeEnd)
       },
       get end () { return start + SIG_N + HDR_N + mapper.size },
       get safeEnd () {
@@ -737,7 +737,7 @@ module.exports = class PicoFeed {
       verify (pk) {
         return crypto_sign_verify_detached(mapper.sig, mapper.dat, pk)
       },
-      get buffer () { return buf.subarray(start, mapper.safeEnd) },
+      get buffer () { return buf.slice(start, mapper.safeEnd) },
 
       get key () {
         // Key is an experimental feature, fail-fast for now.
