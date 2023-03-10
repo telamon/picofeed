@@ -763,7 +763,7 @@ module.exports = class PicoFeed {
 }
 // Url compatible b64
 function b2ub (b) {
-  return b.toString('base64').replace(/\+/, '-').replace(/\//g, '_').replace(/=+$/, '')
+  return b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
 function ub2b (str) {
