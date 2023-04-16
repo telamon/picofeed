@@ -5,5 +5,7 @@
 !package.json
 !index.js
 !test.js
+!legacy.js
+!legacy_test.js
 !.editorconfig
 !.gitignore
