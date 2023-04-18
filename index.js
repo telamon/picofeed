@@ -4,8 +4,6 @@ import { bytesToHex, hexToBytes } from '@noble/hashes/utils'
 import { blake3 } from '@noble/hashes/blake3'
 
 // ------ Utils
-const utf8Encoder = new TextEncoder('utf-8')
-const utf8Decoder = new TextDecoder('utf-8')
 
 // lolwords borrowed from @noble/curves/secp256k1 👍💩
 function fail (msg) { throw new Error(msg) }
@@ -15,8 +13,11 @@ export const u8n = data => new Uint8Array(data) // creates Uint8Array
 export const mkHash = data => blake3(data, { dkLen: 256, context: 'PIC0' })
 export const b2h = bytesToHex
 export const h2b = hexToBytes
+const utf8Encoder = new TextEncoder('utf-8')
+const utf8Decoder = new TextDecoder('utf-8')
 export const s2b = s => utf8Encoder.encode(s)
 export const b2s = b => utf8Decoder.decode(b)
+export const symInspect = Symbol.for('nodejs.util.inspect.custom')
 export const cmp = (a, b, i = 0) => {
   if (au8(a).length !== au8(b).length) return false
   while (a[i] === b[i++]) if (i === a.length) return true
@@ -122,6 +123,7 @@ export class BlockMapper {
 
   get size () { return this._size }
   get blockSize () { return this._blksz }
+  get end () { return this.offset + this._blksz }
 
   get body () {
     const o = 1 + 64 + (this.genesis ? 0 : 64) + (this.phat ? 4 : 2)
@@ -137,6 +139,7 @@ export class BlockMapper {
   }
 
   toString () {
+    const fmt = (this.fmt & 0b1111).toString(2).padStart(4, '0')
     const key = this.key && b2h(this.key.slice(0, 3))
     const bhex = b2h(this.sig.slice(0, 4))
       .replace(/(.{2})/g, '$1 ')
@@ -146,8 +149,10 @@ export class BlockMapper {
     const psig = this.genesis
       ? 'GENESIS'
       : b2h(this.psig.slice(0, 4))
-    return JSON.stringify({ key, sig, psig, size: this.size, bhex, butf })
+    return JSON.stringify({ fmt, key, sig, psig, size: this.size, bhex, butf })
   }
+
+  [symInspect] () { return this.toString() }
 }
 
 // ------ POP-0201
@@ -166,27 +171,31 @@ export class Feed {
 
   _grow (min) { // Invalidates all subarrays.
     let size = this._buf.length
-    if (min < size) return
+    if (min < size) return false
     while (size < min) size = size << 1
     const arr = u8n(size)
     this._buf = cpy(arr, this._buf)
+    return true
   }
 
   get buffer () { return this._buf.subarray(0, this.tail) }
 
   append (data, sk) {
     if (typeof data === 'string') data = s2b(data)
-    const psig = this.last?.sig
+    const pblock = this.last
     const pk = schnorr.getPublicKey(sk)
+    let cc = false
     if (!this._c.keys.find(k => cmp(k, pk))) {
-      this._grow((this._buf.length - this.tail) + sizeOfKeySegment)
+      cc = this._grow(this.tail + sizeOfKeySegment)
       createKeySegment(pk, this._buf, this.tail)
       this.tail += sizeOfKeySegment
     }
-    const req = sizeOfBlockSegment(data.length, !psig)
-    this._grow((this._buf.length - this.tail) + req)
-    const b = createBlockSegment(data, sk, psig, this._buf, this.tail)
-    this.tail += b.length
+    const bsize = sizeOfBlockSegment(data.length, !pblock)
+    cc = cc || this._grow(this.tail + bsize)
+    createBlockSegment(data, sk, pblock?.sig, this._buf, this.tail)
+    this.tail += bsize
+    if (pblock) pblock.eoc = false
+    if (cc) delete this._c
     return this.length
   }
 
@@ -211,33 +220,58 @@ export class Feed {
 
   _index (reindex = false, novalidate = false) {
     if (!this._c || reindex) this._c = { keys: [], blocks: [], offset: 0 }
-    const { keys, blocks } = this._c
+    const c = this._c // c is for cache
     // Skip magic
-    if (!this._c.offset && cmp(this._buf.subarray(0, 4), PIC0)) this._c.offset = 4
+    if (!c.offset && cmp(this._buf.subarray(0, 4), PIC0)) c.offset = 4
 
     let seg = null
-    while ((seg = nextSegment(this._buf, this._c.offset))) {
-      const { type, key, block, end } = seg
+    while ((seg = nextSegment(this._buf, c.offset))) {
+      const { type, key, block } = seg
       switch (type) {
-        case 0: keys.push(key); break // KEY
+        case 0:
+          c.keys.push(key)
+          c.offset += sizeOfKeySegment
+          break
         case 1: { // BLK
-          blocks.push(block)
+          c.blocks.push(block)
           if (novalidate) break
-          const p = blocks[blocks.length - 2]
+          const p = c.blocks[c.blocks.length - 2]
           if (p && !cmp(p.sig, block.psig)) throw new Error('InvalidParent')
-          for (let i = 0; i < keys.length; i++) if (block.verify(keys[i])) break
-          if (!block.key) throw new Error('InvalidFeed')
+
+          for (let i = 0; i < c.keys.length; i++) if (block.verify(c.keys[i])) break
+          if (block.key) c.offset = block.end
+          else throw new Error('InvalidFeed')
         } break
         default: return // Stop indexing on unkown byte
       }
-      if (end > this.tail) this.tail = end
-      this._c.offset = end
-      if (block?.eoc) break // Stop indexing on last block
+      if (this.tail < c.offset) this.tail = c.offset
+      if (block?.eoc) break // Safe indexing exit
     }
   }
 
   clone (novalidate = false) {
     return new Feed(cpy(u8n(this.tail), this.buffer), novalidate)
+  }
+
+  truncate (height) {
+    if (!Number.isInteger(height)) throw new Error('ExpectedInteger')
+    if (height === 0) {
+      this.first.fmt = 0xff // brick
+      this.tail = 4
+      delete this._c
+      return 0
+    }
+    const bs = this.blocks
+    while (height < bs.length) bs.pop().fmt = 0xff
+    // ... 🍵
+    bs[--height].eoc = true
+    this._c.offset = this.tail = bs[height].end
+    return this.length
+  }
+
+  inspect (log = console.error) {
+    log('Feed')
+    for (const b of this.blocks) log(b.toString())
   }
 }
 
@@ -247,16 +281,15 @@ function nextSegment (buffer, offset = 0) {
   const type = fmt === 0b01101010
     ? 0
     : (fmt & 0b11110001) === 0b00100001 ? 1 : -1
-  const value = { type, block: null, key: null, end: offset }
+  const value = { type, block: null, key: null }
   switch (type) {
     case 0: // KEY
       value.key = buffer.subarray(offset + 1, offset + 33)
-      value.end += 33
       break
     case 1: // BLK
       value.block = new BlockMapper(buffer, offset)
-      value.end += value.block.blockSize
       break
   }
+  // console.error(`nextSegment(${offset})`, value)
   return value
 }

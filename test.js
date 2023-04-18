@@ -76,11 +76,89 @@ test('POP-0201 Feed.new(), append(), blocks(), keys(), clone()', async t => {
   t.is(feed.blocks.length, 2)
   t.is(feed.keys.length, 1)
   t.is(b2h(feed.keys[0]), pk)
-
   const f2 = feed.clone()
+  t.is(f2.tail, feed.tail)
   t.is(b2h(f2.buffer), b2h(feed.buffer))
 })
 
-test('POP-0201 ', async t => {
+test('POP-0201 truncate()', async t => {
+  const feed = new Feed()
+  const { sk } = Feed.signPair()
+  t.is(feed.append('B0', sk), 1)
+  t.is(feed.append('B1', sk), 2)
+  t.is(feed.append('B2', sk), 3)
+  t.ok(feed.truncate(1), 'truncated')
+  t.is(feed.length, 1, 'new length')
+  t.is(feed.append('B4', sk), 2)
+  const contents = Array.from(feed.blocks).map(b => b2s(b.body)).join()
+  t.is(contents, 'B0,B4')
 
+  feed.truncate(0)
+  t.is(feed.length, 0)
+  t.is(feed.append('B5', sk), 1)
+})
+
+test.skip('POP-0201 compare()', async t => {
+  const K0 = Feed.signPair().sk
+  const a = new Feed()
+  a.append('B0', K0)
+
+  // B longer version of A; Valid
+  // A: K0 B0
+  // B: K0 B0 B1 B2
+  const b = a.clone()
+  b.append('B1', K0)
+  b.append('B2', K0)
+  t.is(a.compare(b), 2, 'Positive when other is ahead')
+  t.is(b2s(b.block(b.length - a._compare(b)).body), 'B1') // first new block
+
+  t.is(b.compare(b.clone()), 0, 'Zero when in sync')
+  // A part of B; Valid
+  // B: K0 B0 B1 B2
+  // A: K0 B0
+  t.is(b.compare(a), -2, 'Negative when other is behind')
+
+  // No common parent
+  // actually, common parent is 00000
+  // In order to throw a cause a real no-common parent
+  // we need slice() support.
+  // B: K0 B0 B1 B2
+  // C: K0 B3 B4
+  const c = new Feed()
+  c.append('B3', K0)
+  c.append('B4', K0)
+  try { b.compare(c) } catch (err) {
+    t.ok(err)
+    t.is(err.type, 'BlockConflict')
+    t.is(err.idxA, 0)
+    t.is(err.idxB, 0)
+  }
+  // Conflict at first blocks
+  try { c.compare(b) } catch (err) {
+    t.ok(err)
+    t.is(err.type, 'BlockConflict')
+    t.is(err.idxA, 0)
+    t.is(err.idxB, 0)
+  }
+
+  // Common parent, but conflict @2
+  // D: K0 B3 B4 B6
+  // C: K0 B3 B4 B5
+  const d = c.clone()
+  c.append('B5', K0)
+  d.append('B6', K0)
+  try { d.compare(c) } catch (err) {
+    t.ok(err)
+    t.is(err.type, 'BlockConflict')
+    t.is(err.idxA, 2)
+    t.is(err.idxB, 2)
+  }
+
+  // Just asserting sanity with 1 more behind test
+  d.append('B7', K0)
+  d.append('B8', K0)
+  const e = d.clone()
+  e.truncate(2)
+  const de = d.compare(e)
+  t.is(de, -3, 'e is 3 behind')
 })
