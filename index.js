@@ -1,11 +1,10 @@
-// import { utils, getPublicKey, signAsync, verify } from '@noble/secp256k1'
 import { schnorr } from '@noble/curves/secp256k1'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils'
 import { blake3 } from '@noble/hashes/blake3'
 
 // ------ Utils
 
-// lolwords borrowed from @noble/curves/secp256k1 👍💩
+// lolwords borrowed from @noble/curves/secp256k1 👌
 function fail (msg) { throw new Error(msg) }
 export const au8 = (a, l) => !(a instanceof Uint8Array) || (typeof l === 'number' && l > 0 && a.length !== l) ? fail('Uint8Array expected') : a // assert Uint8Array[length]
 export const toU8 = (a, len) => au8(typeof a === 'string' ? h2b(a) : u8n(a), len) // norm(hex/u8a) to u8a
@@ -18,13 +17,17 @@ const utf8Decoder = new TextDecoder('utf-8')
 export const s2b = s => utf8Encoder.encode(s)
 export const b2s = b => utf8Decoder.decode(b)
 export const symInspect = Symbol.for('nodejs.util.inspect.custom')
+export const symFeed = Symbol.for('PIC0::Feed')
+export const symBlock = Symbol.for('PIC0::Block')
 export const cmp = (a, b, i = 0) => {
   if (au8(a).length !== au8(b).length) return false
   while (a[i] === b[i++]) if (i === a.length) return true
   return false
 }
 export const cpy = (to, from, offset = 0) => { for (let i = 0; i < from.length; i++) to[offset + i] = from[i]; return to }
-
+export function isFeed (o) { return !!o[symFeed] }
+export function isBlock (o) { return !!o[symBlock] }
+export function usize (n) { return Number.isInteger(n) && n > 0 }
 // ------ POP-01
 export function signPair () {
   const sk = generatePrivateKey()
@@ -46,7 +49,7 @@ export const fmtBLK = 0b00100001
 export const sizeOfKeySegment = 33 // v0
 
 export function sizeOfBlockSegment (dLen, genesis = false) {
-  if (!Number.isFinite(dLen)) throw new Error('Expected dlen: number')
+  if (!usize(dLen)) throw new Error('Expected dLen: usize')
   const phat = dLen > 65536
   if (!genesis) dLen += 64
   if (phat) dLen += 2
@@ -94,6 +97,7 @@ export function createBlockSegment (data, sk, psig, buffer, offset = 0) {
 }
 
 export class BlockMapper {
+  [symBlock] = 4
   constructor (buffer, offset = 0) {
     au8(buffer)
     if ((buffer[offset] & 0b11110001) !== 0b100001) throw new Error('InvalidBlockSegment')
@@ -117,7 +121,7 @@ export class BlockMapper {
   get sig () { return this.buffer.subarray(1, 1 + 64) }
   get id () { return this.sig }
   get psig () {
-    if (this.genesis) throw new Error('GenesisNoParent')
+    if (this.genesis) return u8n(64) // throw new Error('GenesisNoParent')
     return this.buffer.subarray(65, 65 + 64)
   }
 
@@ -157,24 +161,29 @@ export class BlockMapper {
 
 // ------ POP-0201
 export class Feed {
+  [symFeed] = 4
   static signPair = signPair
+  static isFeed = isFeed
+  static isBlock = isBlock
+  static from = feedFrom
   tail = 0
-  constructor (from = 2048, novalidate = false) {
-    if (isFinite(from) && from > 0) {
+  constructor (from = 2048, noverify = false) {
+    if (usize(from)) {
       this._buf = cpy(u8n(from), PIC0)
       this.tail = 4
     } else if (from instanceof Uint8Array) {
       this._buf = from
-      this._index(true, novalidate)
+      this._index(true, noverify)
     } else throw new Error('new accepts number or Uint8Array')
   }
 
-  _grow (min) { // Invalidates all subarrays.
+  _grow (min) {
     let size = this._buf.length
     if (min < size) return false
     while (size < min) size = size << 1
     const arr = u8n(size)
     this._buf = cpy(arr, this._buf)
+    delete this._c // invalidate all subarrays.
     return true
   }
 
@@ -182,20 +191,19 @@ export class Feed {
 
   append (data, sk) {
     if (typeof data === 'string') data = s2b(data)
-    const pblock = this.last
     const pk = schnorr.getPublicKey(sk)
-    let cc = false
-    if (!this._c.keys.find(k => cmp(k, pk))) {
-      cc = this._grow(this.tail + sizeOfKeySegment)
+    if (!this.keys.find(k => cmp(k, pk))) {
+      this._grow(this.tail + sizeOfKeySegment)
       createKeySegment(pk, this._buf, this.tail)
       this.tail += sizeOfKeySegment
     }
-    const bsize = sizeOfBlockSegment(data.length, !pblock)
-    cc = cc || this._grow(this.tail + bsize)
+    const bsize = sizeOfBlockSegment(data.length, !this.last)
+    this._grow(this.tail + bsize)
+
+    const pblock = this.last
     createBlockSegment(data, sk, pblock?.sig, this._buf, this.tail)
     this.tail += bsize
     if (pblock) pblock.eoc = false
-    if (cc) delete this._c
     return this.length
   }
 
@@ -214,18 +222,18 @@ export class Feed {
 
   block (n) {
     const blocks = this.blocks
-    if (n < 0) n = blocks.length + n
-    return blocks[n]
+    return blocks[n < 0 ? blocks.length + n : n]
   }
 
-  _index (reindex = false, novalidate = false) {
+  _index (reindex = false, noverify = false) {
     if (!this._c || reindex) this._c = { keys: [], blocks: [], offset: 0 }
-    const c = this._c // c is for cache
+    const c = this._c // cache
     // Skip magic
     if (!c.offset && cmp(this._buf.subarray(0, 4), PIC0)) c.offset = 4
 
     let seg = null
-    while ((seg = nextSegment(this._buf, c.offset))) {
+    let eoc = false
+    while (!eoc && (seg = nextSegment(this._buf, c.offset))) {
       const { type, key, block } = seg
       switch (type) {
         case 0:
@@ -233,28 +241,28 @@ export class Feed {
           c.offset += sizeOfKeySegment
           break
         case 1: { // BLK
-          c.blocks.push(block)
-          if (novalidate) break
-          const p = c.blocks[c.blocks.length - 2]
+          const p = c.blocks[c.blocks.length - 1]
+          if (p?.eoc) throw new Error('Attempted to index past EOC')
           if (p && !cmp(p.sig, block.psig)) throw new Error('InvalidParent')
-
-          for (let i = 0; i < c.keys.length; i++) if (block.verify(c.keys[i])) break
-          if (block.key) c.offset = block.end
-          else throw new Error('InvalidFeed')
+          if (!noverify && !c.keys.find(k => block.verify(k))) throw new Error('InvalidFeed')
+          c.blocks.push(block)
+          c.offset = block.end
+          eoc = block.eoc // Safe exit
         } break
-        default: return // Stop indexing on unkown byte
+        default: return // Stop indexing on first unkown byte
       }
       if (this.tail < c.offset) this.tail = c.offset
-      if (block?.eoc) break // Safe indexing exit
     }
   }
 
-  clone (novalidate = false) {
-    return new Feed(cpy(u8n(this.tail), this.buffer), novalidate)
+  clone () {
+    // slice() copies memory, subarray() dosen't;
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/slice
+    return new Feed(this._buf.slice(0, this.tail), false)
   }
 
   truncate (height) {
-    if (!Number.isInteger(height)) throw new Error('ExpectedInteger')
+    if (!Number.isInteger(height)) throw new Error('IntegerExpected')
     if (height === 0) {
       this.first.fmt = 0xff // brick
       this.tail = 4
@@ -269,14 +277,41 @@ export class Feed {
     return this.length
   }
 
-  inspect (log = console.error) {
-    log('Feed')
-    for (const b of this.blocks) log(b.toString())
+  compare (other) {
+    other = feedFrom(other)
+    if (this === other) return 0
+    const a = this.blocks
+    const b = other.blocks
+    // Align B to A / Find the common parent block
+    let i = 0
+    let j = 0
+    while (i < a.length && j < b.length) {
+      if (cmp(a[i].psig, b[j].psig)) break
+      if (cmp(a[i].sig, b[j].psig)) { j++; break } // TODO: missing coverage
+      i++
+    }
+    if (i === a.length) throw new Error('NoCommonParent')
+    // Check if the common parent block is the same
+    if (!cmp(a[i].sig, b[j].sig)) throw new Error('BlockConflict')
+
+    // Compare the blocks after the common parent
+    i++
+    j++
+    while (i < a.length && j < b.length) {
+      if (!cmp(a[i].sig, b[j].sig)) throw new Error('BlockConflict')
+      i++
+      j++
+    }
+    if (i === a.length && j === b.length) return 0 // Eql len, eql blocks
+    else if (i === a.length) return b.length - j // A exhausted, remain B
+    else return i - a.length // B exhausted, remain A
   }
+
+  inspect (log = console.error) { log(macrofilm(this)) }
 }
 
 function nextSegment (buffer, offset = 0) {
-  if (buffer.length - offset < 33) return null // OEC
+  if (buffer.length - offset < 33) return null // Minimum Valid Segment
   const fmt = buffer[offset]
   const type = fmt === 0b01101010
     ? 0
@@ -292,4 +327,51 @@ function nextSegment (buffer, offset = 0) {
   }
   // console.error(`nextSegment(${offset})`, value)
   return value
+}
+
+export function feedFrom (input) {
+  if (isFeed(input)) return input
+  // TODO: - Uint8Array Feed
+  // TODO: - Uint8Array Block
+  // TODO: - string? (B64?) POP-0202
+  // TODO: - number: new Feed(n)
+  // TODO: - array<Block|u8>
+  throw new Error(`Cannot create feed from: ${typeof input}`)
+}
+
+// TODO: Move somewhere else
+export function macrofilm (f, emo = true, w = 40, m = 32) {
+  const h = (w - 6) / 2
+  const row = (s = '') => '| ' + s.padEnd(w - 4, ' ') + ' |\n'
+  const row2 = (l, r) => row(l.padEnd(h, ' ') + '| ' + r.padStart(h, ' '))
+  const lb = (c = '=', t = '', b = '|') => b + c + t.padEnd(w - 3, c) + b + '\n'
+  const stp = (w - 6) >> 2
+  const refmt = b => !emo
+    ? (b.fmt & 0xE).toString(2).padStart(4, '0')
+    : (
+        (b.genesis ? '🌱' : '⬆️') +
+        (b.eoc ? '💀' : '⬇️')
+      )
+  const hxa = b => '| ' + b2h(b).replace(/(.{2})/g, '$1 ').padEnd(stp * 3, ' ') +
+    ' | ' + b2s(b).padEnd(stp, ' ') + '  |\n'
+  let str = lb('-', '', '.') +
+    row('FEED') +
+    row(`k: ${f.keys.length} blk: ${f.blocks.length} Size: ${f.tail}b`) +
+    row()
+  for (const [i, b] of f.blocks.entries()) {
+    str += lb('=', `[ BLOCK ${i} ]`) +
+      row2(
+        'Flags: ' + refmt(b),
+        'Key: ' + (b.key ? b2h(b.key.slice(0, 6)) : 'UNKNOWN')
+      ) +
+      row2(b2h(b.sig.slice(0, h >> 2)), b.genesis ? 'GENESIS' : b2h(b.psig.slice(0, h >> 2))) +
+      row2(''.padEnd(h, '_'), ''.padEnd(h, '_')) +
+      row() +
+      row(`Body (${b.size} bytes)`)
+    for (let i = 0; i < Math.min(m, b.size); i += stp) {
+      str += hxa(b.body.slice(i, Math.min(i + stp, b.size)))
+    }
+    str += row()
+  }
+  return str + lb('_')
 }

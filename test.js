@@ -98,7 +98,37 @@ test('POP-0201 truncate()', async t => {
   t.is(feed.append('B5', sk), 1)
 })
 
-test.skip('POP-0201 compare()', async t => {
+test('POP-02: End of Chain Regression', async t => {
+  const { sk } = Feed.signPair()
+  const f = new Feed()
+  f.append('First block', sk)
+  t.is(f._c.blocks[0].eoc, true)
+  f.append('Second block', sk)
+  t.is(f._c.blocks[0].eoc, false)
+  t.is(f._c.blocks[1].eoc, true)
+  f.append('Third block', sk)
+  t.is(f._c.blocks[1].eoc, false)
+  t.is(f._c.blocks[2].eoc, true)
+  const b = f.clone()
+  t.is(b.blocks[2].eoc, true)
+  b.append('Fourth block', sk)
+  t.is(b.blocks[2].eoc, false)
+  t.is(b.blocks[3].eoc, true)
+})
+
+test('POP-0201 inspect()', async t => {
+  const { sk } = Feed.signPair()
+  const f = new Feed()
+  f.append('Once upon a time', sk)
+  f.append('there was a block', sk)
+  f.append('and then another joined', sk)
+  f.append('beneath the rock', sk)
+  let n = 0
+  f.inspect(str => { n++; t.is(typeof str, 'string') })
+  t.is(n, 1)
+})
+
+test('POP-0201 compare()', async t => {
   const K0 = Feed.signPair().sk
   const a = new Feed()
   a.append('B0', K0)
@@ -110,7 +140,7 @@ test.skip('POP-0201 compare()', async t => {
   b.append('B1', K0)
   b.append('B2', K0)
   t.is(a.compare(b), 2, 'Positive when other is ahead')
-  t.is(b2s(b.block(b.length - a._compare(b)).body), 'B1') // first new block
+  t.is(b2s(b.block(b.length - a.compare(b)).body), 'B1') // first new block
 
   t.is(b.compare(b.clone()), 0, 'Zero when in sync')
   // A part of B; Valid
@@ -120,25 +150,19 @@ test.skip('POP-0201 compare()', async t => {
 
   // No common parent
   // actually, common parent is 00000
-  // In order to throw a cause a real no-common parent
-  // we need slice() support.
   // B: K0 B0 B1 B2
-  // C: K0 B3 B4
+  // C: K0 Z3 Z4
   const c = new Feed()
-  c.append('B3', K0)
-  c.append('B4', K0)
+  c.append('Z3', K0)
+  c.append('Z4', K0)
   try { b.compare(c) } catch (err) {
     t.ok(err)
-    t.is(err.type, 'BlockConflict')
-    t.is(err.idxA, 0)
-    t.is(err.idxB, 0)
+    t.is(err.message, 'BlockConflict')
   }
   // Conflict at first blocks
   try { c.compare(b) } catch (err) {
     t.ok(err)
-    t.is(err.type, 'BlockConflict')
-    t.is(err.idxA, 0)
-    t.is(err.idxB, 0)
+    t.is(err.message, 'BlockConflict')
   }
 
   // Common parent, but conflict @2
@@ -149,12 +173,10 @@ test.skip('POP-0201 compare()', async t => {
   d.append('B6', K0)
   try { d.compare(c) } catch (err) {
     t.ok(err)
-    t.is(err.type, 'BlockConflict')
-    t.is(err.idxA, 2)
-    t.is(err.idxB, 2)
+    t.is(err.message, 'BlockConflict')
   }
 
-  // Just asserting sanity with 1 more behind test
+  // Assert sanity with 1 more behind test
   d.append('B7', K0)
   d.append('B8', K0)
   const e = d.clone()
