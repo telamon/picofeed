@@ -184,3 +184,51 @@ test('POP-0201 compare()', async t => {
   const de = d.compare(e)
   t.is(de, -3, 'e is 3 behind')
 })
+
+test('POP-0201: slice() & merge()', async t => {
+  const a = new Feed()
+  const { sk } = Feed.signPair()
+  a.append('zero', sk)
+  const b = a.clone()
+  t.is(a.partial, false)
+  t.is(b.partial, false)
+  a.append('one', sk)
+  a.append('two', sk)
+  const s1 = a.slice(1)
+  t.is(s1.partial, true)
+  const s2 = a.slice(2)
+  t.is(s2.partial, true)
+  t.is(b2s(s1.block(0).body), 'one') // [1, 2]
+  t.is(b2s(s1.block(1).body), 'two') // [1, 2]
+  t.is(b2s(s2.block(0).body), 'two') // [2]
+
+  // test merge with slice
+  // [0].merge([1, 2]) => [0, 1, 2]
+  const c = b.clone()
+  t.is(c.merge(s1), 2, '2 blocks merged')
+  t.is(b2s(c.block(1).body), 'one')
+  t.is(b2s(c.block(2).body), 'two')
+
+  // [0].merge([2]) => [0]
+  const e = b.clone()
+  t.is(e.merge(s2), -1, 'no merge')
+  t.is(e.length, 1) // no merge,
+
+  // Test reverse merge
+  // [1, 2].merge([0]) => [0, 1, 2]
+  debugger
+  t.is(s1.merge(b), 2, '2 blocks merged')
+  t.is(b2s(s1.block(2).body), 'two')
+
+  // Final Test: merge of two slices in reverse order
+  // [2].merge([1]) // => [1, 2]
+  const f = new Feed()
+  f.append('zero', sk)
+  f.append('one', sk)
+  const g = f.slice(1) // [1]
+  f.append('two', sk)
+  const h = f.slice(2) // [2]
+  h.merge(g)
+  t.is(b2s(h.block(0).body), 'one')
+  t.is(b2s(h.block(1).body), 'two')
+})
