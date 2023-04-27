@@ -128,7 +128,7 @@ test('POP-0201 inspect()', async t => {
   t.is(n, 1)
 })
 
-test('POP-0201 compare()', async t => {
+test('POP-0201 diff()', async t => {
   const K0 = Feed.signPair().sk
   const a = new Feed()
   a.append('B0', K0)
@@ -139,14 +139,14 @@ test('POP-0201 compare()', async t => {
   const b = a.clone()
   b.append('B1', K0)
   b.append('B2', K0)
-  t.is(a.compare(b), 2, 'Positive when other is ahead')
-  t.is(b2s(b.block(b.length - a.compare(b)).body), 'B1') // first new block
+  t.is(a.diff(b), 2, 'Positive when other is ahead')
+  t.is(b2s(b.block(b.length - a.diff(b)).body), 'B1') // first new block
 
-  t.is(b.compare(b.clone()), 0, 'Zero when in sync')
+  t.is(b.diff(b.clone()), 0, 'Zero when in sync')
   // A part of B; Valid
   // B: K0 B0 B1 B2
   // A: K0 B0
-  t.is(b.compare(a), -2, 'Negative when other is behind')
+  t.is(b.diff(a), -2, 'Negative when other is behind')
 
   // No common parent
   // actually, common parent is 00000
@@ -155,14 +155,14 @@ test('POP-0201 compare()', async t => {
   const c = new Feed()
   c.append('Z3', K0)
   c.append('Z4', K0)
-  try { b.compare(c) } catch (err) {
+  try { b.diff(c) } catch (err) {
     t.ok(err)
-    t.is(err.message, 'BlockConflict')
+    t.is(err.message, 'diverged')
   }
   // Conflict at first blocks
-  try { c.compare(b) } catch (err) {
+  try { c.diff(b) } catch (err) {
     t.ok(err)
-    t.is(err.message, 'BlockConflict')
+    t.is(err.message, 'diverged')
   }
 
   // Common parent, but conflict @2
@@ -171,9 +171,9 @@ test('POP-0201 compare()', async t => {
   const d = c.clone()
   c.append('B5', K0)
   d.append('B6', K0)
-  try { d.compare(c) } catch (err) {
+  try { d.diff(c) } catch (err) {
     t.ok(err)
-    t.is(err.message, 'BlockConflict')
+    t.is(err.message, 'diverged')
   }
 
   // Assert sanity with 1 more behind test
@@ -181,7 +181,7 @@ test('POP-0201 compare()', async t => {
   d.append('B8', K0)
   const e = d.clone()
   e.truncate(2)
-  const de = d.compare(e)
+  const de = d.diff(e)
   t.is(de, -3, 'e is 3 behind')
 })
 
@@ -216,7 +216,6 @@ test('POP-0201: slice() & merge()', async t => {
 
   // Test reverse merge
   // [1, 2].merge([0]) => [0, 1, 2]
-  debugger
   t.is(s1.merge(b), 2, '2 blocks merged')
   t.is(b2s(s1.block(2).body), 'two')
 
@@ -232,3 +231,70 @@ test('POP-0201: slice() & merge()', async t => {
   t.is(b2s(h.block(0).body), 'one')
   t.is(b2s(h.block(1).body), 'two')
 })
+
+test('Legacy: Slice range', t => {
+  const { sk } = Feed.signPair()
+  const a = new Feed()
+  a.append('0', sk)
+  a.append('1', sk)
+  a.append('2', sk)
+  a.append('3', sk)
+  a.append('4', sk)
+  a.append('5', sk)
+  const b = a.slice(2, 5)
+  t.alike(
+    b.blocks.map(b => b2s(b.body)),
+    ['2', '3', '4']
+  )
+  t.ok(b.last.toString() !== '[object Object]')
+})
+
+test('Legacy: merge when empty', t => {
+  const a = new Feed()
+  const { sk } = Feed.signPair()
+  const b = new Feed()
+  a.append('Hello World', sk)
+  b.merge(a)
+  t.is(b2s(b.first.body), b2s(a.first.body))
+  a.append('Bye world!', sk)
+  t.is(b.length, 1)
+  b.merge(a)
+  t.is(b.length, 2, 'New blocks merged')
+  t.is(b2s(b.blocks[1].body), b2s(a.blocks[1].body))
+})
+
+test('Legacy: merge should accept BlockMapper', t => {
+  const { sk } = Feed.signPair()
+  const a = new Feed()
+  a.append('alpha', sk)
+  a.append('beta', sk)
+  a.append('gamma', sk)
+  const b = new Feed()
+  for (const block of a.blocks) b.merge(block)
+  t.is(b.length, a.length)
+})
+
+test('Regression: ArrayBuffer', t => {
+  const { sk } = Feed.signPair()
+  const f = new Feed()
+  f.append('data', sk)
+  const ab = new ArrayBuffer(f.tail)
+  const v = new Uint8Array(ab)
+  for (let i = 0; i < f.tail; i++) v[i] = f._buf[i]
+  const copy = Feed.from(ab)
+  t.is(f.diff(copy), 0)
+})
+
+test('compat: buffer', t => {
+  // node:Buffer support is completely unintentional
+  const { sk } = Feed.signPair()
+  const f = new Feed()
+  f.append('data', sk)
+  const b = Buffer.alloc(f.tail)
+  for (let i = 0; i < f.tail; i++) b[i] = f._buf[i]
+  const copy = Feed.from(b)
+  t.is(f.diff(copy), 0)
+})
+
+test('from(0) throws', t => t.exception(() => Feed.from(0)))
+test('au8 asserts', t => t.exception(() => new BlockMapper(0)))

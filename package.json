@@ -12,9 +12,9 @@
   "scripts": {
     "test": "node test.js",
     "debug": "node inspect test.js",
-    "cov": "c8 node test.js",
+    "cov": "c8 --check-coverage --lines=100 node test.js",
     "lint": "standard",
-    "prepublishOnly": "standard --fix && npm test && cov --check-coverage --100"
+    "prepublishOnly": "standard --fix && npm test && cov"
   },
   "dependencies": {
     "@noble/curves": "^1.0.0",

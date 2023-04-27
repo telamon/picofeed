@@ -3,9 +3,7 @@ import { bytesToHex, hexToBytes } from '@noble/hashes/utils'
 import { blake3 } from '@noble/hashes/blake3'
 
 // ------ Utils
-
 // lolwords borrowed from @noble/curves/secp256k1 👌
-function fail (msg) { throw new Error(msg) }
 export const au8 = (a, l) => !(a instanceof Uint8Array) || (typeof l === 'number' && l > 0 && a.length !== l) ? fail('Uint8Array expected') : a // assert Uint8Array[length]
 export const toU8 = (a, len) => au8(typeof a === 'string' ? h2b(a) : u8n(a), len) // norm(hex/u8a) to u8a
 export const u8n = data => new Uint8Array(data) // creates Uint8Array
@@ -28,6 +26,7 @@ export const cpy = (to, from, offset = 0) => { for (let i = 0; i < from.length; 
 export function isFeed (o) { return !!o[symFeed] }
 export function isBlock (o) { return !!o[symBlock] }
 export function usize (n) { return Number.isInteger(n) && n > 0 }
+function fail (msg) { throw new Error(msg) }
 // ------ POP-01
 export function signPair () {
   const sk = generatePrivateKey()
@@ -97,7 +96,7 @@ export function createBlockSegment (data, sk, psig, buffer, offset = 0) {
 }
 
 export class BlockMapper {
-  [symBlock] = 4
+  [symBlock] = 4 // v4
   constructor (buffer, offset = 0) {
     au8(buffer)
     const fmt = buffer[offset]
@@ -164,7 +163,7 @@ export class BlockMapper {
 
 // ------ POP-0201
 export class Feed {
-  [symFeed] = 4
+  [symFeed] = 4 // v4
   static signPair = signPair
   static isFeed = isFeed
   static isBlock = isBlock
@@ -281,11 +280,12 @@ export class Feed {
     return this.length
   }
 
-  compare (other) {
+  diff (other) {
     other = feedFrom(other)
     if (this === other) return 0
     const a = this.blocks
     const b = other.blocks
+    if (!a.length) return b.length // A is empty
     // Align B to A / Find the common parent block
     let i = 0 // offset
     let j = 0 // shift
@@ -293,20 +293,20 @@ export class Feed {
       if (cmp(a[i].psig, b[j].psig)) break
       if (cmp(a[i].sig, b[j].psig)) { j--; break }
     }
-    if (i === a.length) throw new Error('NoCommonParent')
+    if (i === a.length) throw new Error('unrelated')
     if (j === -1 && i + 1 === a.length) return b.length // All new
 
     // Compare the blocks after the common parent
     for (; i < a.length && j < b.length; (i++, j++)) {
-      if (i !== j) debugger
-      if (!cmp(a[i].sig, b[j].sig)) throw new Error('BlockConflict')
+      if (i !== j) throw new Error('unchecked')
+      if (!cmp(a[i].sig, b[j].sig)) throw new Error('diverged')
     }
     if (i === a.length && j === b.length) return 0 // Eql len, eql blocks
     else if (i === a.length) return b.length - j // A exhausted, remain B
     else return i - a.length // B exhausted, remain A
   }
 
-  slice (start = 0, end = this.length, noKeys = false) {
+  slice (start = 0, end = this.length) {
     const blocks = this.blocks
       .slice(start < 0 ? this.length - start : start, end)
     return feedFrom(blocks)
@@ -316,53 +316,61 @@ export class Feed {
     let dst = this
     let src = feedFrom(other)
     let s = -1 // Slice offset
-    // Compare src to dst; BlockConflict|NoCommonParent returns -1 else throw
+    // Compare src to dst; diverged|unrelated returns -1 else throw
     try {
-      s = dst.compare(src)
+      s = dst.diff(src)
     } catch (err) {
       switch (err.message) {
-        case 'BlockConflict': return -1
-        case 'NoCommonParent': // Attempt reverse merge
-          if (!dst.partial) return -1 // not possible
+        case 'diverged': return -1
+        case 'unrelated': // Attempt reverse merge
+          // if (!dst.partial) return -1 // not possible
           dst = src.clone()
           src = this
-          try { s = dst.compare(src) } catch (e2) {
-            switch (e2.message) { case 'BlockConflict': case 'NoCommonParent': return -1; default: throw err }
+          try { s = dst.diff(src) } catch (e2) {
+            switch (e2.message) { case 'diverged': case 'unrelated': return -1; default: throw err }
           }
           break
         default: throw err
       }
     }
     if (s < 1) return 0 // no new blocks, abort.
-    // REBASE src ontop of dst; TODO: move to/reuse in feedFrom()
-    dst.last.eoc = false
-    let size = 0
     const blocks = src.blocks.slice(src.length - s, src.length)
-    const keys = []
-    for (const b of blocks) {
-      size += b.blockSize
-      if (
-        !keys.find(k => cmp(b.key, k)) &&
-        !dst.keys.find(k => cmp(b.key, k))
-      ) { keys.push(b.key); size += sizeOfKeySegment }
-    }
-    dst._grow(dst.tail + size)
-    const db = dst._buf
-    for (const k of keys) { createKeySegment(k, db, dst.tail); dst.tail += 33 }
-    for (const [i, b] of blocks.entries()) {
-      cpy(db, b.buffer, dst.tail)
-      if (i === blocks.length - 1) db[dst.tail] |= 0b1000
-      dst.tail += b.blockSize
-    }
-    if (src === this) { // pilfer
-      this._buf = dst._buf
-      this.tail = dst.tail
-      delete this._c
-    }
+    dst._rebase(blocks)
+    if (dst !== this) this._pilfer(dst)
     return blocks.length
   }
 
+  _pilfer (f) { // Steal the memory of 'f' and brick it.
+    this._buf = f._buf
+    this.tail = f.tail
+    f._index = () => { throw new Error('MemoryTaken') }
+    delete this._c // if extended at beginning
+    delete f._c // gentle nudge towards the void
+  }
+
   _rebase (blocks) {
+    if (this.last) this.last.eoc = false
+    let size = 0
+    const keys = []
+    for (const b of blocks) {
+      size += b.blockSize
+      if ( // Identify missing keys
+        !keys.find(k => cmp(b.key, k)) &&
+        !this.keys.find(k => cmp(b.key, k))
+      ) { keys.push(b.key); size += sizeOfKeySegment }
+    }
+    this._grow(this.tail + size)
+    const buffer = this._buf
+    for (const k of keys) {
+      createKeySegment(k, buffer, this.tail)
+      this.tail += sizeOfKeySegment
+    }
+    for (const [i, b] of blocks.entries()) {
+      cpy(buffer, b.buffer, this.tail)
+      if (i === blocks.length - 1) buffer[this.tail] |= 0b1000
+      else buffer[this.tail] = buffer[this.tail] & 0b11110111
+      this.tail += b.blockSize
+    }
   }
 
   inspect (log = console.error) { log(macrofilm(this)) }
@@ -388,26 +396,18 @@ function nextSegment (buffer, offset = 0) {
 
 export function feedFrom (input) {
   if (isFeed(input)) return input
+  if (isBlock(input)) input = [input] // Block => array<Block>
   // array<Block>
   if (Array.isArray(input) && isBlock(input[0])) {
-    let size = PIC0.length
-    const keys = input.reduce((ks, b) => {
-      size += b.blockSize
-      if (!ks.find(k => cmp(b.key, k))) ks.push(b.key)
-      return ks
-    }, [])
-    size += keys.length * sizeOfKeySegment
-    const buf = u8n(size)
-    cpy(buf, PIC0)
-    let o = PIC0.length
-    for (const k of keys) { createKeySegment(k, buf, o); o += 33 }
-    for (const b of input) { cpy(buf, b.buffer, o); o += b.blockSize }
-    return new Feed(buf)
+    const f = new Feed()
+    f._rebase(input)
+    return f
   }
-  // TODO: - Uint8Array Feed
-  // TODO: - Uint8Array Block
-  // TODO: - string? (B64?) POP-0202
-  // TODO: - number: new Feed(n)
+  // TODO: - Uint8Array Block / magic-free-feeds
+  // Uint8Array Feed
+  if (input instanceof ArrayBuffer || ArrayBuffer.isView(input)) {
+    return new Feed(new Uint8Array(input.buffer || input))
+  }
   throw new Error(`Cannot create feed from: ${typeof input}`)
 }
 
