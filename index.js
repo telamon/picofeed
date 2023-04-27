@@ -312,9 +312,10 @@ export class Feed {
     return feedFrom(blocks)
   }
 
-  merge (other) {
+  merge (src, icb) {
     let dst = this
-    let src = feedFrom(other)
+    src = feedFrom(src)
+    if (!src.length) return 0 // don't do empty
     let s = -1 // Slice offset
     // Compare src to dst; diverged|unrelated returns -1 else throw
     try {
@@ -335,9 +336,18 @@ export class Feed {
     }
     if (s < 1) return 0 // no new blocks, abort.
     const blocks = src.blocks.slice(src.length - s, src.length)
-    dst._rebase(blocks)
+    let m = 0
+    let stop = false
+    for (const b of dst._rebase(blocks)) {
+      if (stop) break
+      let after = false
+      if (typeof icb === 'function') icb(b, a => { stop = true; after = !!a })
+      if (stop && !after) break
+      m++
+    }
+    // Array.from(dst._rebase(blocks))
     if (dst !== this) this._pilfer(dst)
-    return blocks.length
+    return m // blocks.length
   }
 
   _pilfer (f) { // Steal the memory of 'f' and brick it.
@@ -348,8 +358,9 @@ export class Feed {
     delete f._c // gentle nudge towards the void
   }
 
-  _rebase (blocks) {
-    if (this.last) this.last.eoc = false
+  * _rebase (blocks) {
+    let ofmt = this.last?.offset || -1
+    // if (this.last) this.last.eoc = false
     let size = 0
     const keys = []
     for (const b of blocks) {
@@ -365,10 +376,12 @@ export class Feed {
       createKeySegment(k, buffer, this.tail)
       this.tail += sizeOfKeySegment
     }
-    for (const [i, b] of blocks.entries()) {
+    for (const b of blocks) {
+      yield b
+      if (ofmt > 0) buffer[ofmt] = buffer[ofmt] & 0b11110111
       cpy(buffer, b.buffer, this.tail)
-      if (i === blocks.length - 1) buffer[this.tail] |= 0b1000
-      else buffer[this.tail] = buffer[this.tail] & 0b11110111
+      ofmt = this.tail
+      buffer[ofmt] |= 0b1000
       this.tail += b.blockSize
     }
   }
@@ -397,14 +410,13 @@ function nextSegment (buffer, offset = 0) {
 export function feedFrom (input) {
   if (isFeed(input)) return input
   if (isBlock(input)) input = [input] // Block => array<Block>
-  // array<Block>
+  // array<Block> // TODO: alter to not copy?
   if (Array.isArray(input) && isBlock(input[0])) {
     const f = new Feed()
-    f._rebase(input)
+    Array.from(f._rebase(input)) // Exhaust iterator
     return f
   }
-  // TODO: - Uint8Array Block / magic-free-feeds
-  // Uint8Array Feed
+  // Uint8Array Feed | Block
   if (input instanceof ArrayBuffer || ArrayBuffer.isView(input)) {
     return new Feed(new Uint8Array(input.buffer || input))
   }
@@ -447,3 +459,26 @@ export function macrofilm (f, emo = true, w = 40, m = 32) {
   }
   return str + lb('_')
 }
+
+// --- collect metrics: leaving this here for now
+export const measure = (schnorr =>
+  (delay = 1000) => {
+    const now = globalThis.performance.now
+    let time = 0
+    const count = {}
+    const v = schnorr.verify
+    schnorr.verify = (sig, hash, pk) => {
+      const h = b2h(hash)
+      count[h] = count[h] || 0
+      count[h]++
+      const start = now()
+      const r = v(sig, hash, pk)
+      time += now() - start
+      return r
+    }
+    setTimeout(() => {
+      const ag = Object.keys(count).map(k => count[k]).sort()
+      console.table(ag)
+      console.log(`>>> Verified ${ag.reduce((s, n) => s + n, 0)} signatures using ${time.toFixed(2)}ms`)
+    }, delay)
+  })(schnorr) // TODO: curious about stats of 3.x
