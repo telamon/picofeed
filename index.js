@@ -169,13 +169,13 @@ export class Feed {
   static isBlock = isBlock
   static from = feedFrom
   tail = 0
-  constructor (from = 2048, noverify = false) {
+  constructor (from = 2048) {
     if (usize(from)) {
       this._buf = cpy(u8n(from), PIC0)
       this.tail = 4
     } else if (from instanceof Uint8Array) {
       this._buf = from
-      this._index(true, noverify)
+      this._index(true)
     } else throw new Error('new accepts number or Uint8Array')
   }
 
@@ -228,7 +228,7 @@ export class Feed {
     return blocks[n < 0 ? blocks.length + n : n]
   }
 
-  _index (reindex = false, noverify = false) {
+  _index (reindex = false, preverified = {}) {
     if (!this._c || reindex) this._c = { keys: [], blocks: [], offset: 0 }
     const c = this._c // cache
     // Skip magic
@@ -247,7 +247,9 @@ export class Feed {
           const p = c.blocks[c.blocks.length - 1]
           if (p?.eoc) throw new Error('Attempted to index past EOC')
           if (p && !cmp(p.sig, block.psig)) throw new Error('InvalidParent')
-          if (!noverify && !c.keys.find(k => block.verify(k))) throw new Error('InvalidFeed')
+          const ki = preverified[b2h(block.sig)]
+          if (c.keys[ki]) block._pk = c.keys[ki] // optimization
+          else if (!c.keys.find(k => block.verify(k))) throw new Error('InvalidFeed')
           c.blocks.push(block)
           c.offset = block.end
           eoc = block.eoc // Safe exit
@@ -317,14 +319,12 @@ export class Feed {
     src = feedFrom(src)
     if (!src.length) return 0 // don't do empty
     let s = -1 // Slice offset
-    // Compare src to dst; diverged|unrelated returns -1 else throw
     try {
       s = dst.diff(src)
     } catch (err) {
       switch (err.message) {
         case 'diverged': return -1
         case 'unrelated': // Attempt reverse merge
-          // if (!dst.partial) return -1 // not possible
           dst = src.clone()
           src = this
           try { s = dst.diff(src) } catch (e2) {
@@ -345,7 +345,6 @@ export class Feed {
       if (stop && !after) break
       m++
     }
-    // Array.from(dst._rebase(blocks))
     if (dst !== this) this._pilfer(dst)
     return m // blocks.length
   }
@@ -362,17 +361,22 @@ export class Feed {
     let ofmt = this.last?.offset || -1
     // if (this.last) this.last.eoc = false
     let size = 0
-    const keys = []
+    const keys = [...this.keys]
+    const klen = keys.length
+    const bk = {} // trade mem for cpu
     for (const b of blocks) {
       size += b.blockSize
-      if ( // Identify missing keys
-        !keys.find(k => cmp(b.key, k)) &&
-        !this.keys.find(k => cmp(b.key, k))
-      ) { keys.push(b.key); size += sizeOfKeySegment }
+      let ki = keys.indexOf(k => cmp(b.key, k))
+      if (ki === -1) { // Add missing key
+        ki = keys.length
+        keys.push(b.key)
+        size += sizeOfKeySegment
+      }
+      bk[b2h(b.sig)] = ki
     }
     this._grow(this.tail + size)
     const buffer = this._buf
-    for (const k of keys) {
+    for (const k of keys.slice(klen)) {
       createKeySegment(k, buffer, this.tail)
       this.tail += sizeOfKeySegment
     }
@@ -384,6 +388,7 @@ export class Feed {
       buffer[ofmt] |= 0b1000
       this.tail += b.blockSize
     }
+    this._index(false, bk)
   }
 
   inspect (log = console.error) { log(macrofilm(this)) }
@@ -410,9 +415,9 @@ function nextSegment (buffer, offset = 0) {
 export function feedFrom (input) {
   if (isFeed(input)) return input
   if (isBlock(input)) input = [input] // Block => array<Block>
-  // array<Block> // TODO: alter to not copy?
+  // array<Block>
   if (Array.isArray(input) && isBlock(input[0])) {
-    const f = new Feed()
+    const f = new Feed() // new Fragment(blocks)  // read-only feed
     Array.from(f._rebase(input)) // Exhaust iterator
     return f
   }
@@ -424,18 +429,16 @@ export function feedFrom (input) {
 }
 
 // TODO: Move somewhere else
-export function macrofilm (f, emo = true, w = 40, m = 32) {
+export function macrofilm (f, w = 40, m = 32) {
   const h = (w - 6) / 2
   const row = (s = '') => '| ' + s.padEnd(w - 4, ' ') + ' |\n'
   const row2 = (l, r) => row(l.padEnd(h, ' ') + '| ' + r.padStart(h, ' '))
   const lb = (c = '=', t = '', b = '|') => b + c + t.padEnd(w - 3, c) + b + '\n'
   const stp = (w - 6) >> 2
-  const refmt = b => !emo
-    ? (b.fmt & 0xE).toString(2).padStart(4, '0')
-    : (
-        (b.genesis ? '🌱' : '⬆️') +
-        (b.eoc ? '💀' : '⬇️')
-      )
+  const refmt = b => (
+    (b.genesis ? '🌱' : '⬆️') +
+    (b.eoc ? '💀' : '⬇️')
+  )
   const hxa = b => '| ' + b2h(b).replace(/(.{2})/g, '$1 ').padEnd(stp * 3, ' ') +
     ' | ' + b2s(b).padEnd(stp, ' ') + '  |\n'
   let str = lb('-', '', '.') +
@@ -446,7 +449,7 @@ export function macrofilm (f, emo = true, w = 40, m = 32) {
     str += lb('=', `[ BLOCK ${i} ]`) +
       row2(
         'Flags: ' + refmt(b),
-        'Key: ' + (b.key ? b2h(b.key.slice(0, 6)) : 'UNKNOWN')
+        'Key: ' + b2h(b.key.slice(0, 6))
       ) +
       row2(b2h(b.sig.slice(0, h >> 2)), b.genesis ? 'GENESIS' : b2h(b.psig.slice(0, h >> 2))) +
       row2(''.padEnd(h, '_'), ''.padEnd(h, '_')) +
@@ -459,7 +462,7 @@ export function macrofilm (f, emo = true, w = 40, m = 32) {
   }
   return str + lb('_')
 }
-
+/*
 // --- collect metrics: leaving this here for now
 export const measure = (schnorr =>
   (delay = 1000) => {
@@ -471,6 +474,7 @@ export const measure = (schnorr =>
       const h = b2h(hash)
       count[h] = count[h] || 0
       count[h]++
+      if (count[h] > 6) throw new Error('Bobp')
       const start = now()
       const r = v(sig, hash, pk)
       time += now() - start
@@ -482,3 +486,5 @@ export const measure = (schnorr =>
       console.log(`>>> Verified ${ag.reduce((s, n) => s + n, 0)} signatures using ${time.toFixed(2)}ms`)
     }, delay)
   })(schnorr) // TODO: curious about stats of 3.x
+measure()
+*/

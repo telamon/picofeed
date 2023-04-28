@@ -7,12 +7,10 @@ import {
   createBlockSegment,
   BlockMapper,
   b2h,
-  b2s,
-  measure
+  b2s
 } from './index.js'
 // shim for test.js and node processes
 if (!globalThis.crypto) globalThis.crypto = webcrypto
-// measure()
 test('POP-02 spec', async t => {
   const { sk, pk } = signPair()
   // console.log('Public', pk.length, pk)
@@ -271,7 +269,6 @@ test('Legacy: merge should accept BlockMapper', t => {
   a.append('beta', sk)
   a.append('gamma', sk)
   const b = new Feed()
-  debugger
   for (const block of a.blocks) b.merge(block)
   t.is(b.length, a.length)
 })
@@ -298,7 +295,7 @@ test('compat: buffer', t => {
   t.is(f.diff(copy), 0)
 })
 
-test.skip('benchmark: quickload', async t => {
+test('benchmark: quickload', async t => {
   // merge() should not cause factorio reverifcation.
   const { sk } = Feed.signPair()
   const a = new Feed()
@@ -312,7 +309,7 @@ test.skip('benchmark: quickload', async t => {
 test('from(0) throws', t => t.exception(() => Feed.from(0)))
 test('au8 asserts', t => t.exception(() => new BlockMapper(0)))
 
-test.skip('POP-0201: interactive merge', async t => {
+test('POP-0201: interactive merge', async t => {
   const { sk } = Feed.signPair()
   const a = new Feed()
   a.append('block 0', sk)
@@ -321,9 +318,8 @@ test.skip('POP-0201: interactive merge', async t => {
   a.append('block 3', sk)
   const b = new Feed()
   let x = 0
-  const y = b.merge(a, ({ block, stop }) => {
-    if (++x > 3) stop()
+  const y = b.merge(a, (block, stop) => {
+    if (++x > 3) stop(true)
   })
   t.is(y, x)
 })
-

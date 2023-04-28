@@ -1,18 +1,35 @@
-[`pure | 📦`](https://github.com/telamon/create-pure)
 [`code style | standard`](https://standardjs.com/)
 # picofeed
 
-> Microscopic Secure Feed occupying a single buffer
+> Flat buffer secure data structure
 
 This is a tiny ultra-portable secure feed, it's designed be small enough to be easily
-embedded and replicated, for example it can be hidden inside a URL or nested within other
+embedded and copied safely, for example it can be hidden inside a URL or nested within other
 secure feeds as a means to transfer information cross-medium securely.
 
-- URLs can be stored on most platforms and channels
-- [No network code](https://xkcd.com/2259/)
-- Browser support via Browserify / node-globals (requires Buffer shim)
-- Singular dependency: sodium-universal
+## What's new
 
+After 3 years of hacking I've redesigned the format.
+But this time I wrote the specs first and published all of it as [POPs](https://github.com/decentlabs-north/pops)
+
+Comments &amp; Contribution appreciated.
+
+> They said it couldn't get any smaller.
+> And yet it did...
+
+### Features `4.x`
+
+- Specs Implemented:
+  - POP-01 Schnorr Signatures
+  - POP-02 Flat format + Blake3 hashes
+  - POP-0201 Developer interface
+- Feeds are now 65% smaller.
+- 0 memory copy &amp; allocation on read operations
+- Code reduced from ~770LOC to ~430LOC
+- Use ArrayBuffers instead of node:Buffer
+- Single dependency `libsodium` replaced with `noble/crypto`
+- Exhaustive Test Coverage
+- TypeDefs
 
 ## <a name="install"></a> Install
 
