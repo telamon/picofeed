@@ -26,11 +26,13 @@ Comments &amp; Contribution appreciated.
 - Feeds are now 65% smaller.
 - 0 memory copy &amp; allocation on read operations
 - Code reduced from ~770LOC to ~430LOC
-- Use ArrayBuffers instead of node:Buffer
-- Single dependency `libsodium` replaced with `noble/crypto`
+- Migrated from `node:Buffer` to `ArrayBuffer`
+- Migrated from `libsodium` to `@noble/curves` + `@noble/hashes`
 - Exhaustive Test Coverage
-- TypeDefs
+- Type Defintions
+- 5x smaller bundles: v3 `276kb` vs. v4 `56kb`
 
+$(npm bin)/tsc --allowJs --checkJs --declaration --emitDeclarationOnly --lib es2019,dom index.js
 ## <a name="install"></a> Install
 
 ```

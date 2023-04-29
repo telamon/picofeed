@@ -4,14 +4,19 @@ import { blake3 } from '@noble/hashes/blake3'
 
 // ------ Utils
 // lolwords borrowed from @noble/curves/secp256k1 👌
-export const au8 = (a, l) => !(a instanceof Uint8Array) || (typeof l === 'number' && l > 0 && a.length !== l) ? fail('Uint8Array expected') : a // assert Uint8Array[length]
+/** @type {(a: Uint8Array, l?: number) => Uint8Array} */
+export const au8 = (a, l) => {
+  if (!(a instanceof Uint8Array) || (typeof l === 'number' && l > 0 && a.length !== l)) throw new Error('Uint8Array expected')
+  else return a
+}
+// assert Uint8Array[length]
 export const toU8 = (a, len) => au8(typeof a === 'string' ? h2b(a) : u8n(a), len) // norm(hex/u8a) to u8a
 export const u8n = data => new Uint8Array(data) // creates Uint8Array
 export const mkHash = data => blake3(data, { dkLen: 256, context: 'PIC0' })
 export const b2h = bytesToHex
 export const h2b = hexToBytes
-const utf8Encoder = new TextEncoder('utf-8')
-const utf8Decoder = new TextDecoder('utf-8')
+const utf8Encoder = new globalThis.TextEncoder()
+const utf8Decoder = new globalThis.TextDecoder()
 export const s2b = s => utf8Encoder.encode(s)
 export const b2s = b => utf8Decoder.decode(b)
 export const symInspect = Symbol.for('nodejs.util.inspect.custom')
@@ -23,22 +28,40 @@ export const cmp = (a, b, i = 0) => {
   return false
 }
 export const cpy = (to, from, offset = 0) => { for (let i = 0; i < from.length; i++) to[offset + i] = from[i]; return to }
+/** @type {(o: *) => o is Feed} */
 export function isFeed (o) { return !!o[symFeed] }
+/** @type {(o: *) => o is Block} */
 export function isBlock (o) { return !!o[symBlock] }
+/**
+ * @typedef {number} usize
+ * @param {*} n
+ * @returns {n is usize}
+ */
 export function usize (n) { return Number.isInteger(n) && n > 0 }
-function fail (msg) { throw new Error(msg) }
 // ------ POP-01
+/**
+ * @typedef {string} SecretHex
+ * @typedef {string} PublicHex
+ * @typedef {Uint8Array} SecretBin
+ * @typedef {Uint8Array} PublicBin
+ * @typedef {PublicHex|PublicBin} PublicKey
+ * @typedef {SecretHex|SecretBin} SecretKey
+ * @typedef {{pk: PublicKey, sk: SecretKey}} SignPair
+ * @returns {SignPair}
+ */
 export function signPair () {
   const sk = generatePrivateKey()
   return { sk, pk: getPublicKey(sk) }
 }
 
+/** @type {() => SecretHex} */
 export function generatePrivateKey () {
   return b2h(schnorr.utils.randomPrivateKey())
 }
 
-export function getPublicKey (privateKey) {
-  return b2h(schnorr.getPublicKey(privateKey))
+/** @type {(secret: SecretKey) => PublicHex} */
+export function getPublicKey (secret) {
+  return b2h(schnorr.getPublicKey(secret))
 }
 
 // ------ POP-02
@@ -95,8 +118,11 @@ export function createBlockSegment (data, sk, psig, buffer, offset = 0) {
   return buffer
 }
 
-export class BlockMapper {
+// ------ POP-0201
+export class Block { // BlockMapper
   [symBlock] = 4 // v4
+  #blksz = 0
+  #size = 0
   constructor (buffer, offset = 0) {
     au8(buffer)
     const fmt = buffer[offset]
@@ -108,10 +134,10 @@ export class BlockMapper {
     const view = new DataView(
       buffer.slice(szo, szo + (isPhat ? 4 : 2)).buffer
     )
-    this._size = isPhat ? view.getUint32(0) : view.getUint16(0)
-    this._blksz = sizeOfBlockSegment(this._size, isGenesis)
-    if (buffer.length < offset + this._blksz) throw new Error('BufferUnderflow')
-    this.buffer = buffer.subarray(offset, offset + this._blksz)
+    this.#size = isPhat ? view.getUint32(0) : view.getUint16(0)
+    this.#blksz = sizeOfBlockSegment(this.#size, isGenesis)
+    if (buffer.length < offset + this.#blksz) throw new Error('BufferUnderflow')
+    this.buffer = buffer.subarray(offset, offset + this.#blksz)
   }
 
   get fmt () { return this.buffer[0] }
@@ -127,9 +153,9 @@ export class BlockMapper {
     return this.buffer.subarray(65, 65 + 64)
   }
 
-  get size () { return this._size }
-  get blockSize () { return this._blksz }
-  get end () { return this.offset + this._blksz }
+  get size () { return this.#size }
+  get blockSize () { return this.#blksz }
+  get end () { return this.offset + this.#blksz }
 
   get body () {
     const o = 1 + 64 + (this.genesis ? 0 : 64) + (this.phat ? 4 : 2)
@@ -138,7 +164,7 @@ export class BlockMapper {
 
   get key () { return this._pk }
   verify (pk) {
-    const hash = mkHash(this.buffer.subarray(65, this._blksz))
+    const hash = mkHash(this.buffer.subarray(65, this.#blksz))
     const v = schnorr.verify(this.sig, hash, pk)
     if (v) this._pk = pk
     return v
@@ -160,15 +186,21 @@ export class BlockMapper {
 
   [symInspect] () { return this.toString() }
 }
-
-// ------ POP-0201
 export class Feed {
   [symFeed] = 4 // v4
   static signPair = signPair
   static isFeed = isFeed
   static isBlock = isBlock
   static from = feedFrom
+  /** @type {number} */
   tail = 0
+
+  /**
+   * Creates a new feed
+   * allocates n bytes when from is a number.
+   * or borrows provided memory as internal buffer
+   * @param {usize|Uint8Array} from
+   */
   constructor (from = 2048) {
     if (usize(from)) {
       this._buf = cpy(u8n(from), PIC0)
@@ -179,7 +211,7 @@ export class Feed {
     } else throw new Error('new accepts number or Uint8Array')
   }
 
-  _grow (min) {
+  #grow (min) {
     let size = this._buf.length
     if (min < size) return false
     while (size < min) size = size << 1
@@ -189,18 +221,27 @@ export class Feed {
     return true
   }
 
+  /** @returns {Uint8Array} access internal memory */
   get buffer () { return this._buf.subarray(0, this.tail) }
 
+  /**
+   * Creates a new block signed with secret.
+   * - resizes internal buffer if needed.
+   * - strings are utf8 encoded.
+   * @param {string|Uint8Array} data Block content.
+   * @param {SecretKey} sk The signing secret
+   * @returns {usize} new feed length
+   */
   append (data, sk) {
     if (typeof data === 'string') data = s2b(data)
     const pk = schnorr.getPublicKey(sk)
     if (!this.keys.find(k => cmp(k, pk))) {
-      this._grow(this.tail + sizeOfKeySegment)
+      this.#grow(this.tail + sizeOfKeySegment)
       createKeySegment(pk, this._buf, this.tail)
       this.tail += sizeOfKeySegment
     }
     const bsize = sizeOfBlockSegment(data.length, !this.last)
-    this._grow(this.tail + bsize)
+    this.#grow(this.tail + bsize)
 
     const pblock = this.last
     createBlockSegment(data, sk, pblock?.sig, this._buf, this.tail)
@@ -209,20 +250,30 @@ export class Feed {
     return this.length
   }
 
+  /**
+   * Lists known keys
+   * @type{Array<PublicBin>}
+   */
   get keys () {
     this._index()
     return this._c.keys
   }
 
+  /** Last block */
   get last () { return this.block(-1) }
+  /** First block */
   get first () { return this.block(0) }
+  /** Length in blocks / height */
   get length () { return this.blocks.length }
   get partial () { return !this.first?.genesis } // Deprecate?
+
+  /** @type {Array<Block>} */
   get blocks () {
     this._index()
     return this._c.blocks
   }
 
+  /** @param {usize} n */
   block (n) {
     const blocks = this.blocks
     return blocks[n < 0 ? blocks.length + n : n]
@@ -233,17 +284,16 @@ export class Feed {
     const c = this._c // cache
     // Skip magic
     if (!c.offset && cmp(this._buf.subarray(0, 4), PIC0)) c.offset = 4
-
-    let seg = null
     let eoc = false
-    while (!eoc && (seg = nextSegment(this._buf, c.offset))) {
-      const { type, key, block } = seg
-      switch (type) {
+    while (!eoc) {
+      const seg = nextSegment(this._buf, c.offset)
+      switch (seg.type) {
         case 0:
-          c.keys.push(key)
+          c.keys.push(seg.key)
           c.offset += sizeOfKeySegment
           break
         case 1: { // BLK
+          const { block } = seg
           const p = c.blocks[c.blocks.length - 1]
           if (p?.eoc) throw new Error('Attempted to index past EOC')
           if (p && !cmp(p.sig, block.psig)) throw new Error('InvalidParent')
@@ -260,12 +310,20 @@ export class Feed {
     }
   }
 
+  /**
+   * Returns a copy of this feed.
+   * @returns {Feed} */
   clone () {
     // slice() copies memory, subarray() dosen't;
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/slice
-    return new Feed(this._buf.slice(0, this.tail), false)
+    return new Feed(this._buf.slice(0, this.tail))
   }
 
+  /**
+   * Drops blocks higher than height
+   * @param {usize} height
+   * @returns {number} new length
+   */
   truncate (height) {
     if (!Number.isInteger(height)) throw new Error('IntegerExpected')
     if (height === 0) {
@@ -282,6 +340,11 @@ export class Feed {
     return this.length
   }
 
+  /**
+   * Compares blocks between self and other
+   * @param {Feed} other
+   * @returns {number} 0 when sync, positive when other is ahead, negative when other is behind.
+   */
   diff (other) {
     other = feedFrom(other)
     if (this === other) return 0
@@ -308,12 +371,26 @@ export class Feed {
     else return i - a.length // B exhausted, remain A
   }
 
+  /**
+   * Creates a smaller copy of self.
+   * Returned feed is recompacted with used keys moved to front.
+   * @param {usize} start Start height
+   * @param {usize} end  End height
+   * @returns {Feed} Slice of blocks + keys
+   */
   slice (start = 0, end = this.length) {
     const blocks = this.blocks
       .slice(start < 0 ? this.length - start : start, end)
     return feedFrom(blocks)
   }
 
+  /** @typedef {(block: Block, stop: (after: boolean) => void) => void} InteractiveMergeCallback */
+  /**
+   * Merges src onto self to create a longer chain.
+   * @param {Feed|Array<Block>|ArrayBuffer} src
+   * @param {InteractiveMergeCallback} icb Interactive Merge Callback
+   * @returns {number} Number of blocks merged.
+   */
   merge (src, icb) {
     let dst = this
     src = feedFrom(src)
@@ -345,11 +422,11 @@ export class Feed {
       if (stop && !after) break
       m++
     }
-    if (dst !== this) this._pilfer(dst)
+    if (dst !== this) this.#pilfer(dst)
     return m // blocks.length
   }
 
-  _pilfer (f) { // Steal the memory of 'f' and brick it.
+  #pilfer (f) { // Steal the memory of 'f' and brick it.
     this._buf = f._buf
     this.tail = f.tail
     f._index = () => { throw new Error('MemoryTaken') }
@@ -374,7 +451,7 @@ export class Feed {
       }
       bk[b2h(b.sig)] = ki
     }
-    this._grow(this.tail + size)
+    this.#grow(this.tail + size)
     const buffer = this._buf
     for (const k of keys.slice(klen)) {
       createKeySegment(k, buffer, this.tail)
@@ -391,27 +468,34 @@ export class Feed {
     this._index(false, bk)
   }
 
+  /**
+   * Prints an funky ascii-representation
+   * of the feed. Useful for inspection.
+   * @param {(line: string) => void} log Printline function
+   */
   inspect (log = console.error) { log(macrofilm(this)) }
 }
 
+/* @typedef {{ type: 0, key: PublicBin }|{ type: 1, block: Block }|{ type: -1 }} Segment */
+/** @typedef {{ type: 0, key: PublicBin }} KeySegment */
+/** @typedef {{ type: 1, block: Block }} BlockSegment */
+/** @typedef {{ type: -1 }} InvalidSegment */
+/** @type {(buffer: Uint8Array, offset: usize) => KeySegment|BlockSegment|InvalidSegment} */
 function nextSegment (buffer, offset = 0) {
-  if (buffer.length - offset < 33) return null // Minimum Valid Segment
+  if (buffer.length - offset < 33) return { type: -1 } // Minimum Valid Segment
   const fmt = buffer[offset]
   const type = fmt === 0b01101010
     ? 0
     : (fmt & 0b11110001) === 0b00100001 ? 1 : -1
-  const value = { type, block: null, key: null }
   switch (type) {
     case 0: // KEY
-      value.key = buffer.subarray(offset + 1, offset + 33)
-      break
+      return { type, key: buffer.subarray(offset + 1, offset + 33) }
     case 1: // BLK
-      value.block = new BlockMapper(buffer, offset)
-      break
+      return { type, block: new Block(buffer, offset) }
+    default: return { type }
   }
-  return value
 }
-
+/** @type {(input: Feed|Block|Array<Block>|Uint8Array|ArrayBuffer) => Feed} */
 export function feedFrom (input) {
   if (isFeed(input)) return input
   if (isBlock(input)) input = [input] // Block => array<Block>

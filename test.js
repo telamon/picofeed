@@ -5,7 +5,7 @@ import {
   signPair,
   createKeySegment,
   createBlockSegment,
-  BlockMapper,
+  Block,
   b2h,
   b2s
 } from './index.js'
@@ -25,14 +25,14 @@ test('POP-02 spec', async t => {
   const b0 = createBlockSegment('hack', sk, null, feed, k0.length)
   offset += b0.length
   // console.log('B0', b0.length, b2h(b0))
-  const bm0 = new BlockMapper(b0)
+  const bm0 = new Block(b0)
   t.is(bm0.eoc, true)
   bm0.eoc = false
 
   const b1 = createBlockSegment('planet', sk, bm0.sig, feed, offset)
   offset += b1.length
   // console.log('B1', b1.length, b2h(b1))
-  const bm1 = new BlockMapper(b1)
+  const bm1 = new Block(b1)
 
   // Final integrity assertion / validate chain
   t.is(b2h(k0.subarray(1)), pk)
@@ -262,7 +262,7 @@ test('Legacy: merge when empty', t => {
   t.is(b2s(b.blocks[1].body), b2s(a.blocks[1].body))
 })
 
-test('Legacy: merge should accept BlockMapper', t => {
+test('Legacy: merge should accept Block', t => {
   const { sk } = Feed.signPair()
   const a = new Feed()
   a.append('alpha', sk)
@@ -307,7 +307,7 @@ test('benchmark: quickload', async t => {
 })
 
 test('from(0) throws', t => t.exception(() => Feed.from(0)))
-test('au8 asserts', t => t.exception(() => new BlockMapper(0)))
+test('au8 asserts', t => t.exception(() => new Block(0)))
 
 test('POP-0201: interactive merge', async t => {
   const { sk } = Feed.signPair()
