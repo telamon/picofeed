@@ -115,6 +115,11 @@ export function createBlockSegment (data, sk, psig, buffer, offset = 0) {
   return buffer
 }
 
+function readBlockSize (buffer, offset, u32 = false) {
+  const view = new DataView(ArrayBuffer.isView(buffer) ? buffer.buffer : buffer)
+  return u32 ? view.getUint32(offset) : view.getUint16(offset)
+}
+
 // ------ POP-0201
 export class Block { // BlockMapper
   [symBlock] = 4 // v4
@@ -128,10 +133,7 @@ export class Block { // BlockMapper
     const isGenesis = !(fmt & 0b10)
     this.offset = offset
     const szo = offset + 1 + 64 + (isGenesis ? 0 : 64)
-    const view = new DataView(
-      buffer.slice(szo, szo + (isPhat ? 4 : 2)).buffer
-    )
-    this.#size = isPhat ? view.getUint32(0) : view.getUint16(0)
+    this.#size = readBlockSize(buffer, szo, isPhat)
     this.#blksz = sizeOfBlockSegment(this.#size, isGenesis)
     if (buffer.length < offset + this.#blksz) throw new Error('BufferUnderflow')
     this.buffer = buffer.subarray(offset, offset + this.#blksz)

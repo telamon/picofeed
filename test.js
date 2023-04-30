@@ -23,16 +23,17 @@ test('POP-02 spec', async t => {
   // console.log('K0', k0.length, b2h(k0))
 
   const b0 = createBlockSegment('hack', sk, null, feed, k0.length)
+  const bm0 = new Block(feed, offset)
   offset += b0.length
   // console.log('B0', b0.length, b2h(b0))
-  const bm0 = new Block(b0)
+
   t.is(bm0.eoc, true)
   bm0.eoc = false
 
   const b1 = createBlockSegment('planet', sk, bm0.sig, feed, offset)
+  const bm1 = new Block(feed, offset)
   offset += b1.length
   // console.log('B1', b1.length, b2h(b1))
-  const bm1 = new Block(b1)
 
   // Final integrity assertion / validate chain
   t.is(b2h(k0.subarray(1)), pk)
