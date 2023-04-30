@@ -444,7 +444,7 @@ export class Feed {
     const bk = {} // trade mem for cpu
     for (const b of blocks) {
       size += b.blockSize
-      let ki = keys.indexOf(k => cmp(b.key, k))
+      let ki = keys.findIndex(k => cmp(b.key, k))
       if (ki === -1) { // Add missing key
         ki = keys.length
         keys.push(b.key)

@@ -295,7 +295,7 @@ test('compat: buffer', t => {
   t.is(f.diff(copy), 0)
 })
 
-test.skip('benchmark: quickload', async t => {
+test('benchmark: quickload', async t => {
   // merge() should not cause factorio reverifcation.
   const { sk } = Feed.signPair()
   const a = new Feed()
