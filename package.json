@@ -14,7 +14,7 @@
     "debug": "node inspect test.js",
     "cov": "c8 --check-coverage --lines=100 node test.js",
     "lint": "standard",
-    "prepublishOnly": "standard --fix && npm test && npm run cov"
+    "prepublishOnly": "standard --fix && npm run cov"
   },
   "dependencies": {
     "@noble/curves": "^1.0.0",

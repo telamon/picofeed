@@ -220,7 +220,10 @@ export class Feed {
   }
 
   /** @returns {Uint8Array} access internal memory */
-  get buffer () { return this._buf.subarray(0, this.tail) }
+  get buffer () {
+    this._index()
+    return this._buf.subarray(0, this.tail)
+  }
 
   /**
    * Creates a new block signed with secret.
@@ -378,7 +381,7 @@ export class Feed {
    */
   slice (start = 0, end = this.length) {
     const blocks = this.blocks
-      .slice(start < 0 ? this.length - start : start, end)
+      .slice(start < 0 ? this.length + start : start, end)
     return feedFrom(blocks)
   }
 
