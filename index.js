@@ -32,11 +32,8 @@ export const cpy = (to, from, offset = 0) => { for (let i = 0; i < from.length; 
 export function isFeed (o) { return !!o[symFeed] }
 /** @type {(o: *) => o is Block} */
 export function isBlock (o) { return !!o[symBlock] }
-/**
- * @typedef {number} usize
- * @param {*} n
- * @returns {n is usize}
- */
+/** @typedef {number} usize */
+/** @type {(n: *) => n is usize} */
 export function usize (n) { return Number.isInteger(n) && n > 0 }
 // ------ POP-01
 /**
@@ -66,7 +63,7 @@ export function getPublicKey (secret) {
 
 // ------ POP-02
 export const PIC0 = s2b('PIC0')
-export const fmtKEY = 0b01101010
+export const fmtKEY = 0b01101010 // 0b10100100
 export const fmtBLK = 0b00100001
 export const sizeOfKeySegment = 33 // v0
 
@@ -186,6 +183,7 @@ export class Block { // BlockMapper
 
   [symInspect] () { return this.toString() }
 }
+
 export class Feed {
   [symFeed] = 4 // v4
   static signPair = signPair
@@ -273,7 +271,7 @@ export class Feed {
     return this._c.blocks
   }
 
-  /** @param {usize} n */
+  /** @param {number} n */
   block (n) {
     const blocks = this.blocks
     return blocks[n < 0 ? blocks.length + n : n]
@@ -374,7 +372,7 @@ export class Feed {
   /**
    * Creates a smaller copy of self.
    * Returned feed is recompacted with used keys moved to front.
-   * @param {usize} start Start height
+   * @param {number} start Start height
    * @param {usize} end  End height
    * @returns {Feed} Slice of blocks + keys
    */
@@ -558,7 +556,6 @@ export const measure = (schnorr =>
       const h = b2h(hash)
       count[h] = count[h] || 0
       count[h]++
-      if (count[h] > 6) throw new Error('Bobp')
       const start = now()
       const r = v(sig, hash, pk)
       time += now() - start
