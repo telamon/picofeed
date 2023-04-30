@@ -1,5 +1,10 @@
 [`code style | standard`](https://standardjs.com/)
-# picofeed
+```
+          _
+ _ . _  _|__  _  _|
+|_)|(_(_)|(/_(/_(_| v4
+|
+```
 
 > Flat buffer secure data structure
 
@@ -11,13 +16,13 @@ secure feeds as a means to transfer information cross-medium securely.
 
 ## `v4` What's new
 
+> They said it couldn't get any smaller.
+> And yet it did...
+
 After 3 years of hacking I've redesigned the format.
 But this time the specs were written &amp; published first: [POPs](https://github.com/decentlabs-north/pops)
 
 Comments &amp; Contribution appreciated.
-
-> They said it couldn't get any smaller.
-> And yet it did...
 
 ### Features
 
@@ -26,13 +31,13 @@ Comments &amp; Contribution appreciated.
   - POP-02 Flat format + Blake3 hashes
   - POP-0201 Developer interface
 - Feeds are now 65% smaller.
-- 5x smaller bundles: v3 `276kb` vs. v4 `56kb`
 - 0 memory copy &amp; allocation on read operations
+- 5x smaller bundles: v3 `276kb` vs. v4 `56kb`
 - Code reduced from ~770LOC to ~430LOC
 - Migrated to `ArrayBuffer`
 - Migrated to `@noble/curves` &amp; `@noble/hashes`
 - Exhaustive Test Coverage
-- Added Type Defintions
+- Added Type Defintions via JSDoc@Type ~ enjoy
 
 $(npm bin)/tsc --allowJs --checkJs --declaration --emitDeclarationOnly --lib es2020,dom index.js
 
@@ -72,6 +77,14 @@ b2h(remoteFeed.block(0).key) === alice.pk // true
 ## Changelog
 #### `4.x`
 - complete rewrite, refer to "what's new" section.
+- `signPair()` returns `hexstring` keys
+- `sk.slice(32)` no longer works, use `getPublicKey(sk)`
+- `block.parentSig` renamed to `block.psig`
+- `block.isGenesis` renamed to `block.genesis`
+- `feed.get(n)` renamed to `feed.block(n)`
+- `feed.blocks()` removed in favour of `feed.blocks`
+- `feed.pickle()` removed until further notice.
+- `feed.fromBlocksArray()` incorporated into `feedFrom()` / `Feed.from()`
 
 #### `3.4.0`
 - added Feed.fromBlocksArray(Block[]) to perform bulk-merge, 24x perf increase compared to Feed.merge(block)

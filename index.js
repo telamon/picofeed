@@ -13,7 +13,7 @@ export const au8 = (a, l) => {
 export const toU8 = (a, len) => au8(typeof a === 'string' ? h2b(a) : u8n(a), len) // norm(hex/u8a) to u8a
 export const u8n = data => new Uint8Array(data) // creates Uint8Array
 export const mkHash = data => blake3(data, { dkLen: 256, context: 'PIC0' })
-export const b2h = bytesToHex
+export const b2h = (buf, limit = 0) => bytesToHex(limit ? buf.slice(0, limit) : buf)
 export const h2b = hexToBytes
 const utf8Encoder = new globalThis.TextEncoder()
 const utf8Decoder = new globalThis.TextDecoder()
