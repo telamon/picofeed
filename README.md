@@ -74,6 +74,35 @@ remoteFeed.blocks0).body // => 'Hello'
 b2h(remoteFeed.block(0).key) === alice.pk // true
 ```
 
+## Bundle
+
+```bash
+esbuild --analyze --minify index.js > feed.min.js
+  index.js     8.8kb  100.0%
+   └ index.js  8.8kb  100.0%
+
+esbuild --analyze --minify --bundle index.js > feed.bundle.js
+  index.js                                                     55.0kb  100.0%
+   ├ node_modules/@noble/curves/esm/abstract/weierstrass.js    13.5kb   24.6%
+   ├ index.js                                                   8.1kb   14.7%
+   ├ node_modules/@noble/curves/esm/secp256k1.js                4.4kb    7.9%
+   ├ node_modules/@noble/hashes/esm/blake3.js                   4.0kb    7.3%
+   ├ node_modules/@noble/curves/esm/abstract/utils.js           3.5kb    6.4%
+   ├ node_modules/@noble/curves/esm/abstract/modular.js         3.5kb    6.3%
+   ├ node_modules/@noble/curves/esm/abstract/hash-to-curve.js   2.4kb    4.3%
+   ├ node_modules/@noble/hashes/esm/blake2s.js                  2.2kb    4.1%
+   ├ node_modules/@noble/hashes/esm/sha256.js                   2.0kb    3.7%
+   ├ node_modules/@noble/hashes/esm/_blake2.js                  2.0kb    3.7%
+   ├ node_modules/@noble/hashes/esm/utils.js                    1.9kb    3.5%
+   ├ node_modules/@noble/hashes/esm/_sha2.js                    1.6kb    2.9%
+   ├ node_modules/@noble/hashes/esm/hmac.js                     1.2kb    2.2%
+   ├ node_modules/@noble/hashes/esm/_u64.js                     1.2kb    2.1%
+   ├ node_modules/@noble/curves/esm/abstract/curve.js           1.0kb    1.9%
+   ├ node_modules/@noble/hashes/esm/_assert.js                  924b     1.6%
+   ├ node_modules/@noble/curves/esm/_shortw_utils.js            164b     0.3%
+   └ node_modules/@noble/hashes/esm/crypto.js                    83b     0.1%
+```
+
 ## Changelog
 #### `4.x`
 - complete rewrite, refer to "what's new" section.
@@ -85,6 +114,7 @@ b2h(remoteFeed.block(0).key) === alice.pk // true
 - `feed.blocks()` removed in favour of `feed.blocks`
 - `feed.pickle()` removed until further notice.
 - `feed.fromBlocksArray()` incorporated into `feedFrom()` / `Feed.from()`
+- Not backwards compatible with 3.x feeds
 
 #### `3.4.0`
 - added Feed.fromBlocksArray(Block[]) to perform bulk-merge, 24x perf increase compared to Feed.merge(block)

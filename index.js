@@ -4,12 +4,12 @@ import { blake3 } from '@noble/hashes/blake3'
 
 // ------ Utils
 // lolwords borrowed from @noble/curves/secp256k1 👌
-/** @type {(a: Uint8Array, l?: number) => Uint8Array} */
+/** assert Uint8Array[length]
+  * @type {(a: Uint8Array, l?: number) => Uint8Array} */
 export const au8 = (a, l) => {
   if (!(a instanceof Uint8Array) || (typeof l === 'number' && l > 0 && a.length !== l)) throw new Error('Uint8Array expected')
   else return a
 }
-// assert Uint8Array[length]
 export const toU8 = (a, len) => au8(typeof a === 'string' ? h2b(a) : u8n(a), len) // norm(hex/u8a) to u8a
 export const u8n = data => new Uint8Array(data) // creates Uint8Array
 export const mkHash = data => blake3(data, { dkLen: 256, context: 'PIC0' })
@@ -36,16 +36,14 @@ export function isBlock (o) { return !!o[symBlock] }
 /** @type {(n: *) => n is usize} */
 export function usize (n) { return Number.isInteger(n) && n > 0 }
 // ------ POP-01
-/**
- * @typedef {string} SecretHex
- * @typedef {string} PublicHex
- * @typedef {Uint8Array} SecretBin
- * @typedef {Uint8Array} PublicBin
- * @typedef {PublicHex|PublicBin} PublicKey
- * @typedef {SecretHex|SecretBin} SecretKey
- * @typedef {{pk: PublicKey, sk: SecretKey}} SignPair
- * @returns {SignPair}
- */
+/** @typedef {string} SecretHex */
+/** @typedef {string} PublicHex */
+/** @typedef {Uint8Array} SecretBin */
+/** @typedef {Uint8Array} PublicBin */
+/** @typedef {PublicHex|PublicBin} PublicKey */
+/** @typedef {SecretHex|SecretBin} SecretKey */
+/** @typedef {{pk: PublicKey, sk: SecretKey}} SignPair */
+/** @returns {SignPair} */
 export function signPair () {
   const sk = generatePrivateKey()
   return { sk, pk: getPublicKey(sk) }
@@ -67,6 +65,13 @@ export const fmtKEY = 0b01101010 // 0b10100100
 export const fmtBLK = 0b00100001
 export const sizeOfKeySegment = 33 // v0
 
+/**
+ * Estimates size of a block given it's body.
+ * Blocks are considered phat if dLen > 64kb
+ * @param {usize} dLen Length of data/body
+ * @param {boolean} genesis First block?
+ * @returns {usize}
+ */
 export function sizeOfBlockSegment (dLen, genesis = false) {
   if (!usize(dLen)) throw new Error('Expected dLen: usize')
   const phat = dLen > 65536
@@ -115,12 +120,15 @@ export function createBlockSegment (data, sk, psig, buffer, offset = 0) {
   return buffer
 }
 
+/** @returns {usize} */
 function readBlockSize (buffer, offset, u32 = false) {
   const view = new DataView(ArrayBuffer.isView(buffer) ? buffer.buffer : buffer)
   return u32 ? view.getUint32(offset) : view.getUint16(offset)
 }
 
 // ------ POP-0201
+/** @typedef {(block: Block, stop: (after: boolean) => void) => void} InteractiveMergeCallback */
+/** @typedef {Uint8Array} SignatureBin */
 export class Block { // BlockMapper
   [symBlock] = 4 // v4
   #blksz = 0
@@ -139,14 +147,17 @@ export class Block { // BlockMapper
     this.buffer = buffer.subarray(offset, offset + this.#blksz)
   }
 
+  /** @type {number} */
   get fmt () { return this.buffer[0] }
   set fmt (n) { this.buffer[0] = n }
   get genesis () { return !(this.fmt & 0b10) }
   get phat () { return !!(this.fmt & 0b100) }
   get eoc () { return !!(this.fmt & 0b1000) }
   set eoc (v) { this.fmt = (this.fmt & 0b11110111) | (v ? 0b1000 : 0) }
+  /** @returns {SignatureBin} */
   get sig () { return this.buffer.subarray(1, 1 + 64) }
   get id () { return this.sig }
+  /** @returns {SignatureBin} */
   get psig () {
     if (this.genesis) return u8n(64) // throw new Error('GenesisNoParent')
     return this.buffer.subarray(65, 65 + 64)
@@ -155,7 +166,7 @@ export class Block { // BlockMapper
   get size () { return this.#size }
   get blockSize () { return this.#blksz }
   get end () { return this.offset + this.#blksz }
-
+  /** @returns {Uint8Array} */
   get body () {
     const o = 1 + 64 + (this.genesis ? 0 : 64) + (this.phat ? 4 : 2)
     return this.buffer.subarray(o, o + this.size)
@@ -387,7 +398,6 @@ export class Feed {
     return feedFrom(blocks)
   }
 
-  /** @typedef {(block: Block, stop: (after: boolean) => void) => void} InteractiveMergeCallback */
   /**
    * Merges src onto self to create a longer chain.
    * @param {Feed|Array<Block>|ArrayBuffer} src
@@ -395,6 +405,7 @@ export class Feed {
    * @returns {number} Number of blocks merged.
    */
   merge (src, icb) {
+    /** @type {Feed} */
     let dst = this
     src = feedFrom(src)
     if (!src.length) return 0 // don't do empty
@@ -549,28 +560,3 @@ export function macrofilm (f, w = 40, m = 32) {
   }
   return str + lb('_')
 }
-/*
-// --- collect metrics: leaving this here for now
-export const measure = (schnorr =>
-  (delay = 1000) => {
-    const now = globalThis.performance.now
-    let time = 0
-    const count = {}
-    const v = schnorr.verify
-    schnorr.verify = (sig, hash, pk) => {
-      const h = b2h(hash)
-      count[h] = count[h] || 0
-      count[h]++
-      const start = now()
-      const r = v(sig, hash, pk)
-      time += now() - start
-      return r
-    }
-    setTimeout(() => {
-      const ag = Object.keys(count).map(k => count[k]).sort()
-      console.table(ag)
-      console.log(`>>> Verified ${ag.reduce((s, n) => s + n, 0)} signatures using ${time.toFixed(2)}ms`)
-    }, delay)
-  })(schnorr) // TODO: curious about stats of 3.x
-measure()
-*/
