@@ -7,24 +7,31 @@ import {
   createBlockSegment,
   Block,
   b2h,
-  b2s
+  b2s,
+  h2b,
+  getPublicKey
 } from './index.js'
 // shim for test.js and node processes
 if (!globalThis.crypto) globalThis.crypto = webcrypto
 test('POP-02 spec', async t => {
-  const { sk, pk } = signPair()
+  // const { sk, pk } = signPair()
+  const sk = h2b('f1d0ea8c8dc3afca9766ee6104f02b6ea427f1d24e3e4d6813b09946dff11dfa')
+  const pk = getPublicKey(sk)
   // console.log('Public', pk.length, pk)
   // console.log('Private', sk.length, sk)
 
   const feed = new Uint8Array(1024)
   let offset = 0
   const k0 = createKeySegment(pk, feed)
+
+  t.is(k0[0].toString(2), '10110000', 'key segment')
   offset += k0.length
   // console.log('K0', k0.length, b2h(k0))
 
   const b0 = createBlockSegment('hack', sk, null, feed, k0.length)
   const bm0 = new Block(feed, offset)
   offset += b0.length
+  t.is(bm0.fmt.toString(2), '10111001', 'solo block')
   // console.log('B0', b0.length, b2h(b0))
 
   t.is(bm0.eoc, true)
@@ -37,25 +44,29 @@ test('POP-02 spec', async t => {
 
   // Final integrity assertion / validate chain
   t.is(b2h(k0.subarray(1)), pk)
-
+  t.is(bm0.fmt.toString(2), '10110001', 'genesis not last')
   t.is(bm0.genesis, true)
   t.is(bm0.phat, false)
   t.is(bm0.eoc, false)
   t.is(bm0.verify(pk), true)
   t.is(b2s(bm0.body), 'hack')
 
+  t.is(bm1.fmt.toString(2), '10111011', 'last block')
   t.is(bm1.genesis, false)
   t.is(bm1.phat, false)
   t.is(bm1.eoc, true)
   t.is(b2h(bm1.psig), b2h(bm0.sig))
   t.is(bm1.verify(pk), true)
   t.is(b2s(bm1.body), 'planet')
-  // console.log('Feed:', b2h(feed.subarray(0, offset)))
+
+  const rebase = new Feed()
+  rebase.merge(feed.subarray(0, offset))
+  // console.log('Feed:', b2h(rebase.buffer))
 })
 
 test('POP-0201 Feed.new(), append(), blocks(), keys(), clone()', async t => {
   const feed = new Feed()
-  const { sk, pk } = Feed.signPair()
+  const { sk, pk } = signPair()
 
   const h = feed.append('Hello World', sk)
   t.is(h, 1)
@@ -83,7 +94,7 @@ test('POP-0201 Feed.new(), append(), blocks(), keys(), clone()', async t => {
 
 test('POP-0201 truncate()', async t => {
   const feed = new Feed()
-  const { sk } = Feed.signPair()
+  const { sk } = signPair()
   t.is(feed.append('B0', sk), 1)
   t.is(feed.append('B1', sk), 2)
   t.is(feed.append('B2', sk), 3)
@@ -296,7 +307,7 @@ test('compat: buffer', t => {
   t.is(f.diff(copy), 0)
 })
 
-test('benchmark: quickload', async t => {
+test('benchmark: quickload', async _ => {
   // merge() should not cause factorio reverifcation.
   const { sk } = Feed.signPair()
   const a = new Feed()
@@ -319,7 +330,7 @@ test('POP-0201: interactive merge', async t => {
   a.append('block 3', sk)
   const b = new Feed()
   let x = 0
-  const y = b.merge(a, (block, stop) => {
+  const y = b.merge(a, (_, stop) => {
     if (++x > 3) stop(true)
   })
   t.is(y, x)

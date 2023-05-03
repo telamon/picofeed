@@ -12,7 +12,7 @@ export const au8 = (a, l) => {
 }
 export const toU8 = (a, len) => au8(typeof a === 'string' ? h2b(a) : u8n(a), len) // norm(hex/u8a) to u8a
 export const u8n = data => new Uint8Array(data) // creates Uint8Array
-export const mkHash = data => blake3(data, { dkLen: 256, context: 'PIC0' })
+export const mkHash = data => blake3(data, { dkLen: 256 }) //, context: 'PIC0' })
 export const b2h = (buf, limit = 0) => bytesToHex(limit ? buf.slice(0, limit) : buf)
 export const h2b = hexToBytes
 const utf8Encoder = new globalThis.TextEncoder()
@@ -61,8 +61,8 @@ export function getPublicKey (secret) {
 
 // ------ POP-02
 export const PIC0 = s2b('PIC0')
-export const fmtKEY = 0b01101010 // 0b10100100
-export const fmtBLK = 0b00100001
+export const fmtKEY = 0b10110000 // 0b10100100
+export const fmtBLK = 0b10110001
 export const sizeOfKeySegment = 33 // v0
 
 /**
@@ -114,7 +114,8 @@ export function createBlockSegment (data, sk, psig, buffer, offset = 0) {
   const sig = schnorr.sign(hash, sk)
 
   for (let i = 0; i < sig.length; i++) buffer[i + 1] = sig[i]
-  buffer[0] = 0b00101001 | // RESV|EOC|BLK
+  buffer[0] = fmtBLK | // RESV|EOC|BLK
+    0b1000 |
     (psig ? 0b10 : 0) |
     (phat ? 0b100 : 0)
   return buffer
@@ -136,7 +137,7 @@ export class Block { // BlockMapper
   constructor (buffer, offset = 0) {
     au8(buffer)
     const fmt = buffer[offset]
-    if ((fmt & 0b11110001) !== 0b100001) throw new Error('InvalidBlockSegment')
+    if ((fmt & 0b11110001) !== fmtBLK) throw new Error('InvalidBlockSegment')
     const isPhat = !!(fmt & 0b100)
     const isGenesis = !(fmt & 0b10)
     this.offset = offset
@@ -356,7 +357,7 @@ export class Feed {
 
   /**
    * Compares blocks between self and other
-   * @param {Feed} other
+   * @param {Feedlike} other
    * @returns {number} 0 when sync, positive when other is ahead, negative when other is behind.
    */
   diff (other) {
@@ -400,7 +401,7 @@ export class Feed {
 
   /**
    * Merges src onto self to create a longer chain.
-   * @param {Feed|Array<Block>|ArrayBuffer} src
+   * @param {Feedlike} src
    * @param {InteractiveMergeCallback} icb Interactive Merge Callback
    * @returns {number} Number of blocks merged.
    */
@@ -483,14 +484,13 @@ export class Feed {
   }
 
   /**
-   * Prints an funky ascii-representation
+   * Prints a funky ascii-representation
    * of the feed. Useful for inspection.
    * @param {(line: string) => void} log Printline function
    */
   inspect (log = console.error) { log(macrofilm(this)) }
 }
 
-/* @typedef {{ type: 0, key: PublicBin }|{ type: 1, block: Block }|{ type: -1 }} Segment */
 /** @typedef {{ type: 0, key: PublicBin }} KeySegment */
 /** @typedef {{ type: 1, block: Block }} BlockSegment */
 /** @typedef {{ type: -1 }} InvalidSegment */
@@ -498,9 +498,9 @@ export class Feed {
 function nextSegment (buffer, offset = 0) {
   if (buffer.length - offset < 33) return { type: -1 } // Minimum Valid Segment
   const fmt = buffer[offset]
-  const type = fmt === 0b01101010
+  const type = fmt === fmtKEY
     ? 0
-    : (fmt & 0b11110001) === 0b00100001 ? 1 : -1
+    : (fmt & 0b11110001) === fmtBLK ? 1 : -1
   switch (type) {
     case 0: // KEY
       return { type, key: buffer.subarray(offset + 1, offset + 33) }
@@ -509,7 +509,8 @@ function nextSegment (buffer, offset = 0) {
     default: return { type }
   }
 }
-/** @type {(input: Feed|Block|Array<Block>|Uint8Array|ArrayBuffer) => Feed} */
+/** @typedef {Feed|Block|Array<Block>|Uint8Array|ArrayBuffer} Feedlike
+/** @type {(input: Feedlike) => Feed} */
 export function feedFrom (input) {
   if (isFeed(input)) return input
   if (isBlock(input)) input = [input] // Block => array<Block>
