@@ -1,6 +1,5 @@
 import { schnorr } from '@noble/curves/secp256k1'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils'
-import { blake3 } from '@noble/hashes/blake3'
 
 // ------ Utils
 // lolwords borrowed from @noble/curves/secp256k1 👌
@@ -12,7 +11,6 @@ export const au8 = (a, l) => {
 }
 export const toU8 = (a, len) => au8(typeof a === 'string' ? h2b(a) : u8n(a), len) // norm(hex/u8a) to u8a
 export const u8n = data => new Uint8Array(data) // creates Uint8Array
-export const mkHash = data => blake3(data, { dkLen: 256 }) //, context: 'PIC0' })
 export const b2h = (buf, limit = 0) => bytesToHex(limit ? buf.slice(0, limit) : buf)
 export const h2b = hexToBytes
 const utf8Encoder = new globalThis.TextEncoder()
@@ -68,12 +66,12 @@ export const sizeOfKeySegment = 33 // v0
 /**
  * Estimates size of a block given it's body.
  * Blocks are considered phat if dLen > 64kb
- * @param {usize} dLen Length of data/body
+ * @param {usize} dLen Length of data
  * @param {boolean} genesis First block?
  * @returns {usize}
  */
 export function sizeOfBlockSegment (dLen, genesis = false) {
-  if (!usize(dLen)) throw new Error('Expected dLen: usize')
+  if (!usize(dLen)) throw new Error('Expected positive integer')
   const phat = dLen > 65536
   if (!genesis) dLen += 64
   if (phat) dLen += 2
@@ -110,8 +108,8 @@ export function createBlockSegment (data, sk, psig, buffer, offset = 0) {
     buffer[1 + 64 + o1 + o2 + i] = data[i]
   }
 
-  const hash = mkHash(buffer.subarray(1 + 64))
-  const sig = schnorr.sign(hash, sk)
+  const message = buffer.subarray(1 + 64)
+  const sig = schnorr.sign(message, sk)
 
   for (let i = 0; i < sig.length; i++) buffer[i + 1] = sig[i]
   buffer[0] = fmtBLK | // RESV|EOC|BLK
@@ -175,8 +173,8 @@ export class Block { // BlockMapper
 
   get key () { return this._pk }
   verify (pk) {
-    const hash = mkHash(this.buffer.subarray(65, this.#blksz))
-    const v = schnorr.verify(this.sig, hash, pk)
+    const message = this.buffer.subarray(65, this.#blksz)
+    const v = schnorr.verify(this.sig, message, pk)
     if (v) this._pk = pk
     return v
   }
