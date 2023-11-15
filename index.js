@@ -418,7 +418,8 @@ export class Feed {
           dst = src.clone()
           src = this
           try { s = dst.diff(src) } catch (e2) {
-            switch (e2.message) { case 'diverged': case 'unrelated': return -1; default: throw err }
+            if (['diverged', 'unrelated'].includes(e2.message)) return -1
+            else throw err
           }
           break
         default: throw err
