@@ -1,3 +1,9 @@
+// TODO: Go back to using Curve25519 + Ed25519;
+// RIP Picofeed V4 is as my gut assumed, the skipped/unreleased version.
+// The pk-recovery feature is a hack that originates the flaw that ECDSA signatures aren't anonymous.
+// You can look at two signatures and tell if they were produced by the same key.
+// Besides benchmarks show that EdDSA is marginally faster than a heavily optimized ECDSA(secp256k1)
+
 import { schnorr } from '@noble/curves/secp256k1'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils'
 
@@ -61,8 +67,22 @@ export function getPublicKey (secret) {
 
 // ------ POP-02
 export const PIC0 = s2b('PIC0')
-export const fmtKEY = 0b10110000 // 0b10100100
-export const fmtBLK = 0b10110001
+// V4.1 (v5 candidate) Main Feature; Key-Compression (using ecdsa pk-recovery)
+// Goal: Use 4bit block FMT-glyph
+// - Remove fmtKEY
+// Hi nibble: 1010 ('pico' in encoded as consonants & vowels)
+// Lo nibble: 3 2 1 0
+//            E P G T (Reserve Type as 0 = block, 1 = key (flip it))
+/*
+ * Block hashing has to be altered.
+ * Use tagged hasing to protect against secp256k1 malleable signatures; (include public key in signed hash)
+ * // Still Considering Blake3
+ *
+ */
+
+export const fmtBLK = 0b10100000
+export const fmtKEY = 0b10100001
+
 export const sizeOfKeySegment = 33 // v0
 
 /**
