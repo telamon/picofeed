@@ -42,8 +42,10 @@ export function usize (n) { return Number.isInteger(n) && n > 0 }
 /** @typedef {Uint8Array} PublicBin */
 /** @typedef {PublicHex|PublicBin} PublicKey */
 /** @typedef {SecretHex|SecretBin} SecretKey */
-/** @typedef {{pk: PublicKey, sk: SecretKey}} SignPair */
-/** @returns {SignPair} */
+/** @typedef {{pk: PublicHex, sk: SecretKey}} SignPairHex */
+/** @typedef {{pk: PublicBin, sk: SecretBin}} SignPairBin */
+/** @typedef {SignPairBin|SignPairBin} SignPair */
+/** @returns {SignPairHex} */
 export function signPair () {
   const sk = generatePrivateKey()
   return { sk, pk: getPublicKey(sk) }

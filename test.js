@@ -335,3 +335,5 @@ test('POP-0201: interactive merge', async t => {
   })
   t.is(y, x)
 })
+
+test('Regression; new Feed(ArrayBuffer) auto-to Uint8Array()')
