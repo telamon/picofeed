@@ -519,6 +519,7 @@ function nextSegment (buffer, offset = 0) {
     default: return { type }
   }
 }
+
 /** @typedef {Feed|Block|Array<Block>|Uint8Array|ArrayBuffer} Feedlike
 /** @type {(input: Feedlike) => Feed} */
 export function feedFrom (input) {
@@ -570,4 +571,29 @@ export function macrofilm (f, w = 40, m = 32) {
     str += row()
   }
   return str + lb('_')
+}
+
+/** Encodes number as varint into buffer@offset
+ * @return {number} number of bytes written */
+export function varintEncode (num, buffer = [], offset = 0) {
+  let i = 0
+  while (num >= 0x80) {
+    buffer[offset + i++] = (num & 0x7F) | 0x80
+    num >>= 7
+  }
+  buffer[offset + i++] = num
+  return i
+}
+
+/** Decodes number from buffer@offset
+ * @return {[number, number]} tuple of [value, bytesRead] */
+export function varintDecode (buffer, offset = 0) {
+  let value = 0
+  let i = 0
+  while (offset < buffer.length) {
+    const b = buffer[offset++]
+    value |= (b & 0x7F) << (i++ * 7)
+    if (!(b & 0x80)) return [value, i]
+  }
+  throw new Error('Insufficient bytes in buffer')
 }
