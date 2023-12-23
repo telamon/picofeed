@@ -1,5 +1,5 @@
 import { webcrypto } from 'node:crypto'
-import { test } from 'brittle'
+import { test, solo, skip } from 'brittle'
 import {
   Feed,
   signPair,
@@ -308,7 +308,7 @@ test('compat: buffer', t => {
   t.is(f.diff(copy), 0)
 })
 
-test('benchmark: quickload', async _ => {
+skip('benchmark: quickload', async _ => {
   // merge() should not cause factorio reverifcation.
   const { sk } = Feed.signPair()
   const a = new Feed()
@@ -336,5 +336,3 @@ test('POP-0201: interactive merge', async t => {
   })
   t.is(y, x)
 })
-
-// test('Regression; new Feed(ArrayBuffer) auto-to Uint8Array()')

@@ -1,9 +1,3 @@
-// TODO: Go back to using Curve25519 + Ed25519;
-// RIP Picofeed V4 is as my gut assumed, the skipped/unreleased version.
-// The pk-recovery feature is a hack that originates the flaw that ECDSA signatures aren't anonymous.
-// You can look at two signatures and tell if they were produced by the same key.
-// Besides benchmarks show that EdDSA is marginally faster than a heavily optimized ECDSA(secp256k1)
-
 import { ed25519 } from '@noble/curves/ed25519'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils'
 
@@ -38,6 +32,7 @@ export function isBlock (o) { return !!o[symBlock] }
 /** @typedef {number} usize */
 /** @type {(n: *) => n is usize} */
 export function usize (n) { return Number.isInteger(n) && n > 0 }
+
 // ------ POP-01
 /** @typedef {string} SecretHex */
 /** @typedef {string} PublicHex */
@@ -46,8 +41,6 @@ export function usize (n) { return Number.isInteger(n) && n > 0 }
 /** @typedef {PublicHex|PublicBin} PublicKey */
 /** @typedef {SecretHex|SecretBin} SecretKey */
 /** @typedef {{pk: PublicHex, sk: SecretKey}} SignPairHex */
-/** @typedef {{pk: PublicBin, sk: SecretBin}} SignPairBin */
-/** @typedef {SignPairBin|SignPairBin} SignPair */
 /** @returns {SignPairHex} */
 export function signPair () {
   const sk = generatePrivateKey()
@@ -64,12 +57,19 @@ export function getPublicKey (secret) {
   return toHex(ed25519.getPublicKey(secret))
 }
 
-// ------ POP-02
+/* ------ POP-02: Binary encoding (TODO: update telamon/pops)
+ * Picofeed uses a 4bit marker to identify
+ * each binary segment as either key or block,
+ * we call it 'fmt' byte.
+ *
+ * High Nibble: 1011 -- reserved
+ * Low Nibble:
+ *  bit0: Type // Key: 0, Block = 1
+ *  bit1: Genesis
+ *  bit2: 0 -- reserved
+ *  bit3: End of Chain
+ */
 export const PIC0 = s2b('PIC0')
-// Goal: Use 4bit block FMT-glyph
-// Hi nibble: 1010 -- reserved
-// Low nibble: 3 2 1 0
-//            E P G T (EndOfChain, Phat, Genesis, Type)
 export const fmtKEY = 0b10110000
 export const fmtBLK = 0b10110001
 export const sizeOfKeySegment = 33 // v0
