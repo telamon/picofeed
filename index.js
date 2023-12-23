@@ -1,7 +1,11 @@
 import { ed25519 } from '@noble/curves/ed25519'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils'
+// ------ Constants
+export const symInspect = Symbol.for('nodejs.util.inspect.custom')
+export const symFeed = Symbol.for('PIC0::Feed')
+export const symBlock = Symbol.for('PIC0::Block')
 
-// ------ one-liner utils
+// ------ Utils
 /** assert Uint8Array[length]
   * @type {(a: Uint8Array, l?: number) => Uint8Array} */
 export const au8 = (a, l) => {
@@ -14,9 +18,6 @@ const utf8Encoder = new globalThis.TextEncoder()
 const utf8Decoder = new globalThis.TextDecoder()
 export const s2b = s => utf8Encoder.encode(s)
 export const b2s = b => utf8Decoder.decode(b)
-export const symInspect = Symbol.for('nodejs.util.inspect.custom')
-export const symFeed = Symbol.for('PIC0::Feed')
-export const symBlock = Symbol.for('PIC0::Block')
 export const cmp = (a, b, i = 0) => {
   if (au8(a).length !== au8(b).length) return false
   while (a[i] === b[i++]) if (i === a.length) return true
@@ -87,24 +88,22 @@ export const sizeOfKeySegment = 33 // v0
 
 /**
  * Estimates size of a block given it's body.
- * Blocks are considered phat if dLen > 64kb
  * @param {usize} dLen Length of data
  * @param {boolean} genesis First block?
  * @returns {usize}
  */
 export function sizeOfBlockSegment (dLen, genesis = false) {
   if (!usize(dLen)) throw new Error('Expected positive integer')
-  const phat = dLen > 65536
+  dLen += varintEncode(dLen)
   if (!genesis) dLen += 64
-  if (phat) dLen += 2
-  return dLen + 1 + 2 + 64
+  return dLen + 1 + 64
 }
 
 export function createKeySegment (key, b, offset = 0) {
   au8(b)
   if (b.length < sizeOfKeySegment) throw new Error('BufferUnderflow')
   key = toU8(key, 32)
-  for (let i = 0; i < 32; i++) b[offset + 1 + i] = key[i]
+  cpy(b, key, offset + 1)
   b[offset] = fmtKEY // RESV|V0|KEY
   return b.slice(offset, offset + sizeOfKeySegment)
 }
@@ -112,39 +111,21 @@ export function createKeySegment (key, b, offset = 0) {
 export function createBlockSegment (data, sk, psig, buffer, offset = 0) {
   au8(buffer)
   if (typeof data === 'string') data = s2b(data)
-  const phat = data.length > 65536
   const o1 = psig ? 64 : 0
-  const o2 = phat ? 4 : 2
   const bsize = sizeOfBlockSegment(data.length, !psig)
 
   if (buffer.length - offset < bsize) throw new Error('BufferUnderflow')
   buffer = buffer.subarray(offset, offset + bsize)
+  const o2 = varintEncode(data.length, buffer, 1 + 64 + o1)
 
-  const view = new DataView(buffer.buffer) // Views operate on original buffer
-  if (phat) view.setUint32(offset + 1 + 64 + o1, data.length)
-  else view.setUint16(offset + 1 + 64 + o1, data.length)
-
-  if (psig) for (let i = 0; i < 64; i++) buffer[1 + 64 + i] = psig[i]
-
-  for (let i = 0; i < data.length; i++) {
-    buffer[1 + 64 + o1 + o2 + i] = data[i]
-  }
+  if (psig) cpy(buffer, psig, 1 + 64)
+  cpy(buffer, data, 1 + 64 + o1 + o2)
 
   const message = buffer.subarray(1 + 64)
   const sig = ed25519.sign(message, sk)
-
-  for (let i = 0; i < sig.length; i++) buffer[i + 1] = sig[i]
-  buffer[0] = fmtBLK | // RESV|EOC|BLK
-    0b1000 |
-    (psig ? 0b10 : 0) |
-    (phat ? 0b100 : 0)
+  cpy(buffer, sig, 1)
+  buffer[0] = fmtBLK | 0b1000 | (psig ? 0b10 : 0)
   return buffer
-}
-
-/** @returns {usize} */
-function readBlockSize (buffer, offset, u32 = false) {
-  const view = new DataView(ArrayBuffer.isView(buffer) ? buffer.buffer : buffer)
-  return u32 ? view.getUint32(offset) : view.getUint16(offset)
 }
 
 /* ------ POP-0201
@@ -156,15 +137,17 @@ export class Block { // BlockMapper
   [symBlock] = 4 // v4
   #blksz = 0
   #size = 0
+  #sizeOffset = 0
   constructor (buffer, offset = 0) {
     au8(buffer)
     const fmt = buffer[offset]
     if ((fmt & 0b11110001) !== fmtBLK) throw new Error('InvalidBlockSegment')
-    const isPhat = !!(fmt & 0b100)
     const isGenesis = !(fmt & 0b10)
     this.offset = offset
     const szo = offset + 1 + 64 + (isGenesis ? 0 : 64)
-    this.#size = readBlockSize(buffer, szo, isPhat)
+    const [ds, so] = varintDecode(buffer, szo)
+    this.#size = ds
+    this.#sizeOffset = so
     this.#blksz = sizeOfBlockSegment(this.#size, isGenesis)
     if (buffer.length < offset + this.#blksz) throw new Error('BufferUnderflow')
     this.buffer = buffer.subarray(offset, offset + this.#blksz)
@@ -174,7 +157,6 @@ export class Block { // BlockMapper
   get fmt () { return this.buffer[0] }
   set fmt (n) { this.buffer[0] = n }
   get genesis () { return !(this.fmt & 0b10) }
-  get phat () { return !!(this.fmt & 0b100) }
   get eoc () { return !!(this.fmt & 0b1000) }
   set eoc (v) { this.fmt = (this.fmt & 0b11110111) | (v ? 0b1000 : 0) }
   /** @returns {SignatureBin} */
@@ -191,7 +173,7 @@ export class Block { // BlockMapper
   get end () { return this.offset + this.#blksz }
   /** @returns {Uint8Array} */
   get body () {
-    const o = 1 + 64 + (this.genesis ? 0 : 64) + (this.phat ? 4 : 2)
+    const o = 1 + 64 + (this.genesis ? 0 : 64) + this.#sizeOffset
     return this.buffer.subarray(o, o + this.size)
   }
 
