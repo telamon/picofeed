@@ -4,21 +4,20 @@
 // You can look at two signatures and tell if they were produced by the same key.
 // Besides benchmarks show that EdDSA is marginally faster than a heavily optimized ECDSA(secp256k1)
 
-import { schnorr } from '@noble/curves/secp256k1'
+import { ed25519 } from '@noble/curves/ed25519'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils'
 
 // ------ Utils
-// lolwords borrowed from @noble/curves/secp256k1 👌
 /** assert Uint8Array[length]
   * @type {(a: Uint8Array, l?: number) => Uint8Array} */
 export const au8 = (a, l) => {
   if (!(a instanceof Uint8Array) || (typeof l === 'number' && l > 0 && a.length !== l)) throw new Error('Uint8Array expected')
   else return a
 }
-export const toU8 = (a, len) => au8(typeof a === 'string' ? h2b(a) : u8n(a), len) // norm(hex/u8a) to u8a
+export const toU8 = (a, len) => au8(typeof a === 'string' ? fromHex(a) : u8n(a), len) // norm(hex/u8a) to u8a
 export const u8n = data => new Uint8Array(data) // creates Uint8Array
-export const b2h = (buf, limit = 0) => bytesToHex(limit ? buf.slice(0, limit) : buf)
-export const h2b = hexToBytes
+export const toHex = (buf, limit = 0) => bytesToHex(limit ? buf.slice(0, limit) : buf)
+export const fromHex = hexToBytes
 const utf8Encoder = new globalThis.TextEncoder()
 const utf8Decoder = new globalThis.TextDecoder()
 export const s2b = s => utf8Encoder.encode(s)
@@ -57,32 +56,22 @@ export function signPair () {
 
 /** @type {() => SecretHex} */
 export function generatePrivateKey () {
-  return b2h(schnorr.utils.randomPrivateKey())
+  return toHex(ed25519.utils.randomPrivateKey())
 }
 
 /** @type {(secret: SecretKey) => PublicHex} */
 export function getPublicKey (secret) {
-  return b2h(schnorr.getPublicKey(secret))
+  return toHex(ed25519.getPublicKey(secret))
 }
 
 // ------ POP-02
 export const PIC0 = s2b('PIC0')
-// V4.1 (v5 candidate) Main Feature; Key-Compression (using ecdsa pk-recovery)
 // Goal: Use 4bit block FMT-glyph
-// - Remove fmtKEY
-// Hi nibble: 1010 ('pico' in encoded as consonants & vowels)
-// Lo nibble: 3 2 1 0
-//            E P G T (Reserve Type as 0 = block, 1 = key (flip it))
-/*
- * Block hashing has to be altered.
- * Use tagged hasing to protect against secp256k1 malleable signatures; (include public key in signed hash)
- * // Still Considering Blake3
- *
- */
-
-export const fmtBLK = 0b10100000
-export const fmtKEY = 0b10100001
-
+// Hi nibble: 1010 -- reserved
+// Low nibble: 3 2 1 0
+//            E P G T (EndOfChain, Phat, Genesis, Type)
+export const fmtKEY = 0b10110000
+export const fmtBLK = 0b10110001
 export const sizeOfKeySegment = 33 // v0
 
 /**
@@ -131,7 +120,7 @@ export function createBlockSegment (data, sk, psig, buffer, offset = 0) {
   }
 
   const message = buffer.subarray(1 + 64)
-  const sig = schnorr.sign(message, sk)
+  const sig = ed25519.sign(message, sk)
 
   for (let i = 0; i < sig.length; i++) buffer[i + 1] = sig[i]
   buffer[0] = fmtBLK | // RESV|EOC|BLK
@@ -196,22 +185,22 @@ export class Block { // BlockMapper
   get key () { return this._pk }
   verify (pk) {
     const message = this.buffer.subarray(65, this.#blksz)
-    const v = schnorr.verify(this.sig, message, pk)
+    const v = ed25519.verify(this.sig, message, pk)
     if (v) this._pk = pk
     return v
   }
 
   toString () {
     const fmt = (this.fmt & 0b1111).toString(2).padStart(4, '0')
-    const key = this.key && b2h(this.key.slice(0, 3))
-    const bodyhex = b2h(this.sig.slice(0, 4))
+    const key = this.key && toHex(this.key.slice(0, 3))
+    const bodyhex = toHex(this.sig.slice(0, 4))
       .replace(/(.{2})/g, '$1 ')
       .trimEnd()
     const body = b2s(this.body.slice(0, 12))
-    const sig = b2h(this.sig.slice(0, 4))
+    const sig = toHex(this.sig.slice(0, 4))
     const psig = this.genesis
       ? 'GENESIS'
-      : b2h(this.psig.slice(0, 4))
+      : toHex(this.psig.slice(0, 4))
     return JSON.stringify({ fmt, key, sig, psig, size: this.size, bodyhex, body })
   }
 
@@ -269,7 +258,7 @@ export class Feed {
    */
   append (data, sk) {
     if (typeof data === 'string') data = s2b(data)
-    const pk = schnorr.getPublicKey(sk)
+    const pk = ed25519.getPublicKey(sk)
     if (!this.keys.find(k => cmp(k, pk))) {
       this.#grow(this.tail + sizeOfKeySegment)
       createKeySegment(pk, this._buf, this.tail)
@@ -332,7 +321,7 @@ export class Feed {
           const p = c.blocks[c.blocks.length - 1]
           if (p?.eoc) throw new Error('Attempted to index past EOC')
           if (p && !cmp(p.sig, block.psig)) throw new Error('InvalidParent')
-          const ki = preverified[b2h(block.sig)]
+          const ki = preverified[toHex(block.sig)]
           if (c.keys[ki]) block._pk = c.keys[ki] // optimization
           else if (!c.keys.find(k => block.verify(k))) throw new Error('InvalidFeed')
           c.blocks.push(block)
@@ -485,7 +474,7 @@ export class Feed {
         keys.push(b.key)
         size += sizeOfKeySegment
       }
-      bk[b2h(b.sig)] = ki
+      bk[toHex(b.sig)] = ki
     }
     this.#grow(this.tail + size)
     const buffer = this._buf
@@ -559,7 +548,7 @@ export function macrofilm (f, w = 40, m = 32) {
     (b.genesis ? '🌱' : '⬆️') +
     (b.eoc ? '💀' : '⬇️')
   )
-  const hxa = b => '| ' + b2h(b).replace(/(.{2})/g, '$1 ').padEnd(stp * 3, ' ') +
+  const hxa = b => '| ' + toHex(b).replace(/(.{2})/g, '$1 ').padEnd(stp * 3, ' ') +
     ' | ' + b2s(b).padEnd(stp, ' ') + '  |\n'
   let str = lb('-', '', '.') +
     row('FEED') +
@@ -569,9 +558,9 @@ export function macrofilm (f, w = 40, m = 32) {
     str += lb('=', `[ BLOCK ${i} ]`) +
       row2(
         'Flags: ' + refmt(b),
-        'Key: ' + b2h(b.key.slice(0, 6))
+        'Key: ' + toHex(b.key.slice(0, 6))
       ) +
-      row2(b2h(b.sig.slice(0, h >> 2)), b.genesis ? 'GENESIS' : b2h(b.psig.slice(0, h >> 2))) +
+      row2(toHex(b.sig.slice(0, h >> 2)), b.genesis ? 'GENESIS' : toHex(b.psig.slice(0, h >> 2))) +
       row2(''.padEnd(h, '_'), ''.padEnd(h, '_')) +
       row() +
       row(`Body (${b.size} bytes)`)
