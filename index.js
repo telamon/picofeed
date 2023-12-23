@@ -1,15 +1,13 @@
 import { ed25519 } from '@noble/curves/ed25519'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils'
 
-// ------ Utils
+// ------ one-liner utils
 /** assert Uint8Array[length]
   * @type {(a: Uint8Array, l?: number) => Uint8Array} */
 export const au8 = (a, l) => {
   if (!(a instanceof Uint8Array) || (typeof l === 'number' && l > 0 && a.length !== l)) throw new Error('Uint8Array expected')
   else return a
 }
-export const toU8 = (a, len) => au8(typeof a === 'string' ? fromHex(a) : u8n(a), len) // norm(hex/u8a) to u8a
-export const u8n = data => new Uint8Array(data) // creates Uint8Array
 export const toHex = (buf, limit = 0) => bytesToHex(limit ? buf.slice(0, limit) : buf)
 export const fromHex = hexToBytes
 const utf8Encoder = new globalThis.TextEncoder()
@@ -25,6 +23,14 @@ export const cmp = (a, b, i = 0) => {
   return false
 }
 export const cpy = (to, from, offset = 0) => { for (let i = 0; i < from.length; i++) to[offset + i] = from[i]; return to }
+export function toU8 (o) {
+  if (o instanceof Uint8Array) return o
+  if (o instanceof ArrayBuffer) return new Uint8Array(o)
+  // node:Buffer to Uint8Array
+  if (!(o instanceof Uint8Array) && o?.buffer) return new Uint8Array(o.buffer, o.byteOffset, o.byteLength)
+  if (typeof o === 'string' && /^[a-f0-9]+$/i.test(o)) return fromHex(o)
+  throw new Error('Uint8Array coercion failed')
+}
 /** @type {(o: *) => o is Feed} */
 export function isFeed (o) { return !!o[symFeed] }
 /** @type {(o: *) => o is Block} */
@@ -33,7 +39,11 @@ export function isBlock (o) { return !!o[symBlock] }
 /** @type {(n: *) => n is usize} */
 export function usize (n) { return Number.isInteger(n) && n > 0 }
 
-// ------ POP-01
+/* ------ POP-01
+ * Decentralized Identity is a private self-generated key
+ * expressed in it's binary form or simply encoded as a hex-string.
+ * No rituals, no documents, no seed phrases.
+ */
 /** @typedef {string} SecretHex */
 /** @typedef {string} PublicHex */
 /** @typedef {Uint8Array} SecretBin */
@@ -58,12 +68,13 @@ export function getPublicKey (secret) {
 }
 
 /* ------ POP-02: Binary encoding (TODO: update telamon/pops)
- * Picofeed uses a 4bit marker to identify
- * each binary segment as either key or block,
+ * A picofeed is a binary sequence of blocks and keys.
+ * It uses a 4bit marker to identify
+ * each segment and to describe it's type,
  * we call it 'fmt' byte.
  *
- * High Nibble: 1011 -- reserved
- * Low Nibble:
+ * High nibble: 1011 -- reserved
+ * Low nibble:
  *  bit0: Type // Key: 0, Block = 1
  *  bit1: Genesis
  *  bit2: 0 -- reserved
@@ -136,7 +147,9 @@ function readBlockSize (buffer, offset, u32 = false) {
   return u32 ? view.getUint32(offset) : view.getUint16(offset)
 }
 
-// ------ POP-0201
+/* ------ POP-0201
+ * A Feed should provide a higher-level API to easily append, merge and compare.
+ */
 /** @typedef {(block: Block, stop: (after: boolean) => void) => void} InteractiveMergeCallback */
 /** @typedef {Uint8Array} SignatureBin */
 export class Block { // BlockMapper
@@ -169,7 +182,7 @@ export class Block { // BlockMapper
   get id () { return this.sig }
   /** @returns {SignatureBin} */
   get psig () {
-    if (this.genesis) return u8n(64) // throw new Error('GenesisNoParent')
+    if (this.genesis) return new Uint8Array(64) // throw new Error('GenesisNoParent')
     return this.buffer.subarray(65, 65 + 64)
   }
 
@@ -224,7 +237,7 @@ export class Feed {
    */
   constructor (from = 2048) {
     if (usize(from)) {
-      this._buf = cpy(u8n(from), PIC0)
+      this._buf = cpy(new Uint8Array(from), PIC0)
       this.tail = 4
     } else if (from instanceof Uint8Array) {
       this._buf = from
@@ -236,7 +249,7 @@ export class Feed {
     let size = this._buf.length
     if (min < size) return false
     while (size < min) size = size << 1
-    const arr = u8n(size)
+    const arr = new Uint8Array(size)
     this._buf = cpy(arr, this._buf)
     delete this._c // invalidate all subarrays.
     return true
