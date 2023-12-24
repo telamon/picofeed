@@ -8,8 +8,11 @@ import {
   Block,
   toHex,
   b2s,
+  toU8,
   fromHex,
-  getPublicKey
+  getPublicKey,
+  varintEncode,
+  varintDecode
 } from './index.js'
 // shim for test.js and node processes
 if (!globalThis.crypto) globalThis.crypto = webcrypto
@@ -317,9 +320,6 @@ skip('benchmark: quickload', async _ => {
   b.merge(a)
 })
 
-test('from(0) throws', t => t.exception(() => Feed.from(0)))
-test('au8 asserts', t => t.exception(() => new Block(0)))
-
 test('POP-0201: interactive merge', async t => {
   const { sk } = Feed.signPair()
   const a = new Feed()
@@ -333,4 +333,29 @@ test('POP-0201: interactive merge', async t => {
     if (++x > 3) stop(true)
   })
   t.is(y, x)
+})
+
+test('cov:from(0) throws', t => t.exception(() => Feed.from(0)))
+test('cov:au8 asserts', t => t.exception(() => new Block(0)))
+test('cov:toU8 throws', t => t.exception(() => toU8(null)))
+
+test('cov: varint encode/decode', async t => {
+  const b = new Uint8Array(4)
+  const written = varintEncode(1024, b)
+  const [v, read] = varintDecode(b)
+  t.is(v, 1024)
+  t.is(read, written)
+  t.exception(() => varintDecode(b.slice(0, 1)))
+})
+
+test('reverse diverged merge', async t => {
+  const { sk } = Feed.signPair()
+  const a = new Feed()
+  a.append('Journey', sk)
+  a.append('To', sk)
+  const b = a.clone()
+  a.append('Neptune', sk)
+  b.append('Mars', sk)
+  t.is(a.merge(b.slice(-1)), -1, 'diverged')
+  t.is(b.slice(-1).merge(a), -1, 'reverse diverged')
 })

@@ -360,7 +360,7 @@ export class Feed {
   }
 
   /**
-   * Compares blocks between self and other
+   * Compare blocks between self and other
    * @param {Feedlike} other
    * @returns {number} 0 when sync, positive when other is ahead, negative when other is behind.
    */
@@ -378,11 +378,12 @@ export class Feed {
       if (cmp(a[i].sig, b[j].psig)) { j--; break }
     }
     if (i === a.length) throw new Error('unrelated')
-    if (j === -1 && i + 1 === a.length) return b.length // All new
-
+    if (j === -1) { // B[0].parent is at A[i]
+      if (i + 1 === a.length) return b.length // all new
+      else { ++i; ++j } // forward one step
+    }
     // Compare the blocks after the common parent
     for (; i < a.length && j < b.length; (i++, j++)) {
-      if (i !== j) throw new Error('unchecked')
       if (!cmp(a[i].sig, b[j].sig)) throw new Error('diverged')
     }
     if (i === a.length && j === b.length) return 0 // Eql len, eql blocks
@@ -425,7 +426,7 @@ export class Feed {
           src = this
           try { s = dst.diff(src) } catch (e2) {
             if (['diverged', 'unrelated'].includes(e2.message)) return -1
-            else throw err
+            else throw err // c8 ignore next
           }
           break
         default: throw err
