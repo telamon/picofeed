@@ -134,7 +134,7 @@ export function createBlockSegment (data, sk, psig, buffer, offset = 0) {
 /** @typedef {(block: Block, stop: (after: boolean) => void) => void} InteractiveMergeCallback */
 /** @typedef {Uint8Array} SignatureBin */
 export class Block { // BlockMapper
-  [symBlock] = 4 // v4
+  [symBlock] = 5 // v4
   #blksz = 0
   #size = 0
   #sizeOffset = 0
@@ -203,7 +203,7 @@ export class Block { // BlockMapper
 }
 
 export class Feed {
-  [symFeed] = 4 // v4
+  [symFeed] = 5 // v5
   static signPair = signPair
   static isFeed = isFeed
   static isBlock = isBlock

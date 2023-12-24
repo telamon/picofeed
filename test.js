@@ -1,5 +1,5 @@
 import { webcrypto } from 'node:crypto'
-import { test, solo, skip } from 'brittle'
+import { test, skip } from 'brittle'
 import {
   Feed,
   signPair,
