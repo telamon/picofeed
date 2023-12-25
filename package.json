@@ -13,7 +13,7 @@
     "test": "node test.js",
     "debug": "node inspect test.js",
     "cov": "c8 --check-coverage --lines=100 node test.js",
-    "size": "esbuild --bundle --format=esm index.js --outfile=/dev/null --analyze",
+    "size": "esbuild --bundle --minify --format=esm index.js --outfile=/dev/null --analyze",
     "lint": "standard",
     "prepublishOnly": "standard --fix && npm run cov"
   },

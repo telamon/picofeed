@@ -2,44 +2,45 @@
 ```
           _
  _ . _  _|__  _  _|
-|_)|(_(_)|(/_(/_(_| v4
+|_)|(_(_)|(/_(/_(_| v5
 |
 ```
 
-> Flat buffer secure data structure
+> Space Efficient Chain of Blocks
 
-This is a tiny ultra-portable secure feed, it's designed be small enough to be easily
-embedded and copied safely, for example it can be hidden inside a URL or nested within other
-secure feeds as a means to transfer information cross-medium securely.
+- Flat memory layout / zero copy access
+- Single dependency [EdDSA](https://github.com/paulmillr/noble-curves)
+- Fast &amp; compact `Curve25519` + `Ed25519` signatures
+- Pure ES6 (+JSDoc Type annotations)
+- ~450LOC / +41.3kB bundle size
+- Test Coverage 💯
+- Uint8Arrays (no node:buffer or bn.js)
+
+## Intro
+
+Imagine git as a jar, then using pliers pull out a branch.
+That single detached branch is synonymous with one picofeed
+_- a memorybuffer containing cryptographically signed blocks:_
+
+```
+|------|-----|------------------|----------------------|
+| PiC0 | Key | Block 0: "hello" | Block 1: "picoverse" |
+| 4B   | 33B |    71 Bytes      |     138 Bytes        |
+|------|-----|------------------|----------------------|
+```
+
+This library provides a high level API to `append`, `slice` and `merge`
+such feeds - block contents is upto application.
+
+Picofeeds have so far been observed within:
+- QR-Codes (out-of-band-signaling)
+- URLs (cross-messenger / platform-as-a-public-database)
+- DNS-Records (webhosting)
+
+We target user devices,
+this module is the basic building block for the frontend-blockchain-toolkit [picostack](https://github.com/telamon/picostack)
 
 [discord](https://discord.gg/8RMRUPZ9RS)
-
-## `v4` What's new
-
-> They said it couldn't get any smaller.
-> And yet it did...
-
-After 3 years of hacking I've redesigned the format.
-But this time the specs were written &amp; published first: [POPs](https://github.com/decentlabs-north/pops)
-
-Comments &amp; Contribution appreciated.
-
-### Features
-
-- Specs Implemented:
-  - POP-01 Schnorr Signatures
-  - POP-02 Flat format + Blake3 hashes
-  - POP-0201 Developer interface
-- Feeds are now 65% smaller.
-- 0 memory copy &amp; allocation on read operations
-- 5x smaller bundles: v3 `276kb` vs. v4 `56kb`
-- Code reduced from ~770LOC to ~430LOC
-- Migrated to `ArrayBuffer`
-- Migrated to `@noble/curves` &amp; `@noble/hashes`
-- Exhaustive Test Coverage
-- Added Type Defintions via JSDoc@Type ~ enjoy
-
-$(npm bin)/tsc --allowJs --checkJs --declaration --emitDeclarationOnly --lib es2020,dom index.js
 
 ## <a name="install"></a> Install
 
@@ -52,14 +53,13 @@ npm install picofeed
 ## <a name="usage"></a> Usage
 
 ```js
-import { Feed, b2h } from 'picofeed'
+import { Feed, toHex } from 'picofeed'
 
-const alice = Feed.signPair()
-const bob = Feed.signPair()
+const { pk: publicKey, sk: secret } = Feed.signPair()
 
 const feed = new Feed()
 
-feed.append('Hello', alice.sk) // => height 1
+feed.append('Hello', secret) // => height 1
 feed.blocks[0].body // => 'Hello'
 feed.blocks[0].blockSize // => 72 bytes
 
@@ -67,45 +67,23 @@ const verifiableData = feed.buffer
 
 // -- Share buffer anyhow --
 
-const remoteFeed = new Feed(verifiableData) // Verifies signatures
+const remoteFeed = Feed.from(verifiableData) // Verifies signatures
 
-remoteFeed.blocks0).body // => 'Hello'
+remoteFeed.blocks[0].body // => 'Hello'
 
-b2h(remoteFeed.block(0).key) === alice.pk // true
+toHex(remoteFeed.blocks[0].key) === alice.pk // true
 ```
 
-## Bundle
-
-```bash
-esbuild --analyze --minify index.js > feed.min.js
-  index.js     8.8kb  100.0%
-   └ index.js  8.8kb  100.0%
-
-esbuild --analyze --minify --bundle index.js > feed.bundle.js
-  index.js                                                     55.0kb  100.0%
-   ├ node_modules/@noble/curves/esm/abstract/weierstrass.js    13.5kb   24.6%
-   ├ index.js                                                   8.1kb   14.7%
-   ├ node_modules/@noble/curves/esm/secp256k1.js                4.4kb    7.9%
-   ├ node_modules/@noble/hashes/esm/blake3.js                   4.0kb    7.3%
-   ├ node_modules/@noble/curves/esm/abstract/utils.js           3.5kb    6.4%
-   ├ node_modules/@noble/curves/esm/abstract/modular.js         3.5kb    6.3%
-   ├ node_modules/@noble/curves/esm/abstract/hash-to-curve.js   2.4kb    4.3%
-   ├ node_modules/@noble/hashes/esm/blake2s.js                  2.2kb    4.1%
-   ├ node_modules/@noble/hashes/esm/sha256.js                   2.0kb    3.7%
-   ├ node_modules/@noble/hashes/esm/_blake2.js                  2.0kb    3.7%
-   ├ node_modules/@noble/hashes/esm/utils.js                    1.9kb    3.5%
-   ├ node_modules/@noble/hashes/esm/_sha2.js                    1.6kb    2.9%
-   ├ node_modules/@noble/hashes/esm/hmac.js                     1.2kb    2.2%
-   ├ node_modules/@noble/hashes/esm/_u64.js                     1.2kb    2.1%
-   ├ node_modules/@noble/curves/esm/abstract/curve.js           1.0kb    1.9%
-   ├ node_modules/@noble/hashes/esm/_assert.js                  924b     1.6%
-   ├ node_modules/@noble/curves/esm/_shortw_utils.js            164b     0.3%
-   └ node_modules/@noble/hashes/esm/crypto.js                    83b     0.1%
-```
 
 ## Changelog
+
+#### `5.0.1`
+- `phat`-bit replaced with `varint`
+- changed `secp256k1` in favour of `Ed25519`
+- fixed `merge()` bug
+- removed `u8n` util
+
 #### `4.x`
-- complete rewrite, refer to "what's new" section.
 - `signPair()` returns `hexstring` keys
 - `sk.slice(32)` no longer works, use `getPublicKey(sk)`
 - `block.parentSig` renamed to `block.psig`
@@ -117,6 +95,7 @@ esbuild --analyze --minify --bundle index.js > feed.bundle.js
 - Not backwards compatible with 3.x feeds
 
 #### `3.4.0`
+- updated `README.md`
 - added Feed.fromBlocksArray(Block[]) to perform bulk-merge, 24x perf increase compared to Feed.merge(block)
 - removed Feed subclassing/metaprogramming support, it was fun but footgun (don't solve problems by subclassing Feed).
 
