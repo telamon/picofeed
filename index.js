@@ -23,13 +23,15 @@ export const cmp = (a, b, i = 0) => {
   while (a[i] === b[i++]) if (i === a.length) return true
   return false
 }
-export const cpy = (to, from, offset = 0) => { for (let i = 0; i < from.length; i++) to[offset + i] = from[i]; return to }
+export const cpy = (to, from, offset = 0) => { to.set(from, offset); return to }
+/** @returns {Uint8Array} */
 export function toU8 (o) {
   if (o instanceof Uint8Array) return o
   if (o instanceof ArrayBuffer) return new Uint8Array(o)
   // node:Buffer to Uint8Array
   if (!(o instanceof Uint8Array) && o?.buffer) return new Uint8Array(o.buffer, o.byteOffset, o.byteLength)
   if (typeof o === 'string' && /^[a-f0-9]+$/i.test(o)) return fromHex(o)
+  if (typeof o === 'string') return s2b(o) // experimental / might regret
   throw new Error('Uint8Array coercion failed')
 }
 /** @type {(o: *) => o is Feed} */
@@ -83,7 +85,7 @@ export function getPublicKey (secret) {
  */
 export const PIC0 = s2b('PIC0')
 export const fmtKEY = 0b10110000
-export const fmtBLK = 0b10110001
+export const fmtBLK = 0b10110001 // fmt is not covered by signature
 export const sizeOfKeySegment = 33 // v0
 
 /**
@@ -103,7 +105,7 @@ export function createKeySegment (key, b, offset = 0) {
   au8(b)
   if (b.length < sizeOfKeySegment) throw new Error('BufferUnderflow')
   key = toU8(key, 32)
-  cpy(b, key, offset + 1)
+  b.set(key, offset + 1)
   b[offset] = fmtKEY // RESV|V0|KEY
   return b.slice(offset, offset + sizeOfKeySegment)
 }
@@ -118,12 +120,12 @@ export function createBlockSegment (data, sk, psig, buffer, offset = 0) {
   buffer = buffer.subarray(offset, offset + bsize)
   const o2 = varintEncode(data.length, buffer, 1 + 64 + o1)
 
-  if (psig) cpy(buffer, psig, 1 + 64)
-  cpy(buffer, data, 1 + 64 + o1 + o2)
+  if (psig) buffer.set(psig, 1 + 64)
+  buffer.set(data, 1 + 64 + o1 + o2)
 
   const message = buffer.subarray(1 + 64)
   const sig = ed25519.sign(message, sk)
-  cpy(buffer, sig, 1)
+  buffer.set(sig, 1)
   buffer[0] = fmtBLK | 0b1000 | (psig ? 0b10 : 0)
   return buffer
 }
@@ -345,6 +347,7 @@ export class Feed {
    */
   truncate (height) {
     if (!Number.isInteger(height)) throw new Error('IntegerExpected')
+    if (height < 0) height = this.length + height
     if (height === 0) {
       this.first.fmt = 0xff // brick
       this.tail = 4
@@ -481,7 +484,7 @@ export class Feed {
     for (const b of blocks) {
       yield b
       if (ofmt > 0) buffer[ofmt] = buffer[ofmt] & 0b11110111
-      cpy(buffer, b.buffer, this.tail)
+      buffer.set(b.buffer, this.tail)
       ofmt = this.tail
       buffer[ofmt] |= 0b1000
       this.tail += b.blockSize
