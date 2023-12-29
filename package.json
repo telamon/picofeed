@@ -15,7 +15,8 @@
     "cov": "c8 --check-coverage --lines=100 node test.js",
     "size": "esbuild --bundle --minify --format=esm index.js --outfile=/dev/null --analyze",
     "lint": "standard",
-    "prepublishOnly": "standard --fix && npm run cov"
+    "types": "tsc --allowJs --checkJs --declaration --emitDeclarationOnly --lib es2022,dom --target es2022 --outFile index.js --moduleResolution nodenext index.js",
+    "prepublishOnly": "standard --fix && npm run cov && npm run types"
   },
   "dependencies": {
     "@noble/curves": "^1.2.0",

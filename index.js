@@ -104,7 +104,7 @@ export function sizeOfBlockSegment (dLen, genesis = false) {
 export function createKeySegment (key, b, offset = 0) {
   au8(b)
   if (b.length < sizeOfKeySegment) throw new Error('BufferUnderflow')
-  key = toU8(key, 32)
+  key = au8(toU8(key), 32)
   b.set(key, offset + 1)
   b[offset] = fmtKEY // RESV|V0|KEY
   return b.slice(offset, offset + sizeOfKeySegment)
@@ -531,7 +531,7 @@ export function feedFrom (input) {
     return f
   }
   // Uint8Array Feed | Block
-  if (input instanceof ArrayBuffer || ArrayBuffer.isView(input)) {
+  if (ArrayBuffer.isView(input) || input instanceof ArrayBuffer) { // @ts-ignore
     return new Feed(new Uint8Array(input.buffer || input))
   }
   throw new Error(`Cannot create feed from: ${typeof input}`)
