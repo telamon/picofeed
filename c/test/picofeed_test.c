@@ -12,8 +12,8 @@
 #define PK2STR(p) (p)[0],(p)[1],(p)[2],(p)[3],(p)[30],(p)[31]
 #define SIG2STR(p) (p)[0],(p)[1],(p)[2],(p)[61],(p)[62],(p)[63]
 
-//  assert(exp);
 #define OK(exp, desc) do { \
+  assert(exp); \
   if (!(exp)) { log_error("! "desc" - NOT OK!"); return -1; } \
   else log_info("+ "desc); \
 } while (0)

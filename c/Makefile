@@ -13,6 +13,9 @@ $(TARGET): $(SOURCES)
 clean:
 	rm -f $(TARGET)
 
+test: clean $(TARGET)
+	./$(TARGET)
+
 debug: clean $(TARGET)
 	lldb -o 'settings set interpreter.prompt-on-quit false' -o 'run' $(TARGET)
 
