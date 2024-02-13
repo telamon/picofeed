@@ -75,7 +75,7 @@ static void inspect(const pico_feed_t *feed) {
         hexdump(&block->net, sizeof(block->net));
         printf("= DATA\n");
         hexdump(block->net.body, block->net.length);
-        printf("Verified: %i\n", pico_verify_block(block, block->net.author) == 0);
+        printf("Verified: %i\n", pf_verify_block(block, block->net.author) == 0);
         break;
       default:
         printf("not implemented\n");
@@ -112,13 +112,13 @@ static int test_pop02_blocksegment(void) {
   uint8_t *buffer = malloc(1024);
   const char *message = "Presales of HorNET starting at €20+VAT - pm @telamo[h]n 4 more info";
   log_debug("m_len: %zu", strlen(message));
-  int res = pico_create_block(buffer, (uint8_t*)message, strlen(message), pair, NULL);
+  int res = pf_create_block(buffer, (uint8_t*)message, strlen(message), pair, NULL);
   OK(res > 0, "Create Block");
   // hexdump(buffer, res);
   pf_block_t *block = (pf_block_t*) buffer;
   log_debug("block created, @time %i", block->net.date);
   OK(0 == memcmp(block->net.body, message, strlen(message)), "body correct");
-  OK(0 == pico_verify_block(block, pair.pk), "verified block produced");
+  OK(0 == pf_verify_block(block, pair.pk), "verified block produced");
   free(buffer);
   return 0;
 }
@@ -140,7 +140,7 @@ static int test_pop0201_feed(void) {
   OK(0 == memcmp(pico_feed_get(&feed, 1)->net.psig, pico_feed_get(&feed, 0)->net.id, sizeof(pico_signature_t)), "psig verified");
   const char *m3 = "It might or might not work, just plug it in and find out.";
   OK(0 < pico_feed_append(&feed, (const uint8_t*)m3, strlen(m3), pair), "M2 appended");
-  inspect(&feed);
+  // inspect(&feed);
   // hexdump(feed.buffer, feed.tail);
   OK(3 == pico_feed_len(&feed), "3 blocks counted");
   pico_feed_truncate(&feed, 2);
@@ -181,7 +181,7 @@ static int test_pop0201_feed_diff(void) {
   OK(err == 0 && diff == 0, "0 when equal");
   pico_feed_deinit(&c);
 
-  // TODO: need a slice to test unrelated
+  // TODO: need slice() to test UNRELATED
 
   pico_feed_deinit(&a);
   pico_feed_deinit(&b);
@@ -195,12 +195,12 @@ static int test_pop0201_feed_diff(void) {
 } while (0)
 
 int main(void) {
-  time_t start = time(NULL);
-  log_info("Test Startup");
+  uint64_t start = pico_now();
+  log_info("Test start");
   run_test(test_pop01_keygen);
   run_test(test_pop02_blocksegment);
   run_test(test_pop0201_feed);
   run_test(test_pop0201_feed_diff);
-  log_info("Test end, took (%i)", (time(NULL) - start));
+  log_info("Test end, took (%i)", (pico_now() - start));
   return 0;
 }

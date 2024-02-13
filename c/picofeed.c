@@ -2,18 +2,13 @@
 #include <stdint.h>
 #include <time.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <memory.h>
 #include <assert.h>
-// #include <string.h>
-
-/* Borrowing these */
-#define FOR_T(type, i, start, end) for (type i = (start); i < (end); i++)
-#define FOR(i, start, end)         FOR_T(size_t, i, start, end)
-#define COPY(dst, src, size)       FOR(_i_, 0, size) (dst)[_i_] = (src)[_i_]
-#define ZERO(buf, size)            FOR(_i_, 0, size) (buf)[_i_] = 0
-#define cmp(a, b, size)            memcmp(a, b, size)
-// #define COPY(dst, src, size) memcpy((dst), (src), (size))
+// #include <stdio.h>
+#define cpy(dst, src, size) memcpy(dst, src, size)
+#define cmp(a, b, size) memcmp(a, b, size)
+#define zro(ptr, size) memset(ptr, 0x0, size);
+#define error_check(err) assert(0 == (err))
 
 #ifndef PICO_EXTERN_CRYPTO
 #include <monocypher.h>
@@ -126,30 +121,30 @@ size_t pf_sizeof(const pf_block_t *block) {
  * @param psig (optional) parent block id
  * @return int number of bytes written or <1 on error
  */
-int pico_create_block(
+int pf_create_block(
     uint8_t *buffer,
     const uint8_t *data,
     size_t d_len,
     const pico_keypair_t pair,
     const pico_signature_t *psig
 ) {
-  ZERO(buffer, sizeof(pf_block_t));
+  zro(buffer, sizeof(pf_block_t));
   pf_block_t *block = (pf_block_t*) buffer;
   block->net.magic = PICO_MAGIC | CANONICAL;
-  if (psig != NULL) COPY(block->net.psig, (uint8_t*)psig, PICO_SIG_SIZE);
-  COPY(block->net.author, pair.pk, PICO_KEY_SIZE);
+  if (psig != NULL) cpy(block->net.psig, (uint8_t*)psig, PICO_SIG_SIZE);
+  cpy(block->net.author, pair.pk, PICO_KEY_SIZE);
   pf_write_date(block->net.date);
   memset(&block->net.dst, 0xff, 32);
   block->net.length = d_len;
   // if (buffer.length - offset < bsize) return -1 // buffer-underflow
-  COPY(block->net.body, data, d_len); // TODO: if body != data
+  cpy(block->net.body, data, d_len); // TODO: if body != data
   size_t b_size = pf_block_size(block->net.length, block->net.magic);
   const uint8_t *message = buffer + PICO_SIG_SIZE;
   pico_crypto_sign(block->net.id, message, b_size - PICO_SIG_SIZE, pair);
   return b_size;
 }
 
-int pico_verify_block(const pf_block_t *block, const uint8_t public_key[32]) {
+int pf_verify_block(const pf_block_t *block, const uint8_t public_key[32]) {
   const uint8_t *message = ((void*)block) + PICO_SIG_SIZE;
   return pico_crypto_verify(block->net.id, message, pf_block_size(block->net.length, block->net.magic) - PICO_SIG_SIZE, block->net.author);
 }
@@ -157,7 +152,7 @@ int pico_verify_block(const pf_block_t *block, const uint8_t public_key[32]) {
 #define MINIMUM_ALLOCAITION_UNIT 1024
 #define MAXIMUM_FEED_SIZE 65535
 int pico_feed_init(pico_feed_t *feed) {
-  ZERO((uint8_t*)feed, sizeof(pico_feed_t));
+  zro((uint8_t*)feed, sizeof(pico_feed_t));
   feed->buffer = malloc(MINIMUM_ALLOCAITION_UNIT);
   if (feed->buffer == NULL) return -1;
   feed->tail = 0;
@@ -167,7 +162,7 @@ int pico_feed_init(pico_feed_t *feed) {
 
 void pico_feed_deinit(pico_feed_t *feed) {
   free(feed->buffer);
-  ZERO((uint8_t*)feed, sizeof(pico_feed_t));
+  zro((uint8_t*)feed, sizeof(pico_feed_t));
 }
 
 pf_block_t* pf_feed_last(const pico_feed_t *feed) {
@@ -194,7 +189,7 @@ int pico_feed_append(pico_feed_t *feed, const uint8_t *data, const size_t d_len,
     if (err) return err;
   }
   pico_signature_t *psig = last != NULL ? &last->bar.id : NULL;
-  int err = pico_create_block(&feed->buffer[feed->tail], data, d_len, pair, psig);
+  int err = pf_create_block(&feed->buffer[feed->tail], data, d_len, pair, psig);
   if (err != b_size) return err;
   feed->tail += b_size;
   return feed->tail;
@@ -241,7 +236,7 @@ pf_diff_error_t pico_feed_diff(const pico_feed_t *a, const pico_feed_t *b, int *
   if (!len_b) yield(-len_a);
   struct pf_iterator it_a = {0};
   struct pf_iterator it_b = {0};
-  assert(0 == pf_next(b, &it_b)); // step b
+  error_check(pf_next(b, &it_b)); // step b
   int shear = 0;
   uint8_t found = 0;
   // align feeds
@@ -249,11 +244,11 @@ pf_diff_error_t pico_feed_diff(const pico_feed_t *a, const pico_feed_t *b, int *
     if (0 == cmp(it_a.block->net.psig, it_b.block->net.psig, PICO_SIG_SIZE)) { ++found; break; }
     if (0 == cmp(it_a.block->net.id, it_b.block->net.psig, PICO_SIG_SIZE)) { ++found; --shear; break; }
   }
-  printf("[ALIGNMENT] found: %i, idx_a: %i/%i, idx_b: %i/%i, shear: %i\n", found, it_a.idx, len_a, it_b.idx, len_b, shear);
+  // printf("[ALIGNMENT] found: %i, idx_a: %i/%i, idx_b: %i/%i, shear: %i\n", found, it_a.idx, len_a, it_b.idx, len_b, shear);
   if (!found && it_a.idx == len_a) return UNRELATED; // End reach no match
   if (shear == -1) { // B[0].parent is at A[i]
     if (it_a.idx + 1 == len_a) yield(len_b); // all new
-    else assert(0 == pf_next(a, &it_a)); // unshear
+    else error_check(pf_next(a, &it_a)); // unshear
   }
   // feeds realigned, compare blocks after common parent
   while(1) {
@@ -275,15 +270,12 @@ void pf_clone(pico_feed_t *dst, const pico_feed_t *src) {
   memcpy(dst->buffer, src->buffer, dst->tail);
 }
 
-// --- POP-03
+/* ---------------- POP-08 Time ----------------*/
 #define UINT40_MASK 0xFFFFFFFFFFLLU
 uint64_t pico_now(void) {
   struct timespec ts;
   int err = clock_gettime(CLOCK_REALTIME, &ts);
-  if (err != 0) {
-    printf("[WARN] clock_gettime() returned error %i\n", err);
-    return 0;
-  }
+  error_check(err);
   // printf("tv_sec: %lu, tv_nsec: %lu\n", ts.tv_sec, ts.tv_nsec);
   return (100LLU * (uint64_t)(ts.tv_sec - BEGINNING_OF_TIME) + (uint64_t)(ts.tv_nsec / 10000000LLU)) & UINT40_MASK;
 }

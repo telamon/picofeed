@@ -62,6 +62,7 @@ struct _pack pf_block_canon {
 };
 
 // The free and space efficient form
+// NOT IMPLEMENTED YET
 struct _pack pf_block_anon {
   uint8_t id[64];               // the signature of block
   uint8_t magic;                // PiC0
@@ -77,12 +78,16 @@ struct _pack pf_block_anon {
 };
 
 typedef union _pack {
-  struct pf_block_canon net;     // piconet data format
-  struct pf_block_anon bar;     // anonymous binary data
+  struct pf_block_canon net;
+  struct pf_block_anon bar;
 } pf_block_t;
 
-int pico_create_block(uint8_t *buffer, const uint8_t *message, size_t m_len, const pico_keypair_t pair, const pico_signature_t *parent);
-int pico_verify_block(const pf_block_t *block, const uint8_t public_key[32]);
+// high level api uses prefix 'pico'
+// low level api uses prefix 'pf'
+// when in doubt use pico.
+
+int pf_create_block(uint8_t *buffer, const uint8_t *message, size_t m_len, const pico_keypair_t pair, const pico_signature_t *parent);
+int pf_verify_block(const pf_block_t *block, const uint8_t public_key[32]);
 size_t pf_sizeof(const pf_block_t *block);
 
 /* --------------- POP-0201 Feed ---------------*/
@@ -93,8 +98,12 @@ typedef struct {
 } pico_feed_t;
 
 /**
- * @brief Initialized a writable feed
- * @param feed Pointer to mutable feed struct
+ * @brief Initializes a writable feed
+ *
+ * Allocates memory which must be released
+ * using pico_feed_deinit();
+ *
+ * @param feed pointer to mutable feed struct
  * @return error code
  */
 int pico_feed_init(pico_feed_t *feed);
@@ -108,9 +117,11 @@ int pico_feed_init(pico_feed_t *feed);
 void pico_feed_deinit(pico_feed_t *feed);
 
 /**
- * @brief appends block to a writable feed
+ * @brief Appends block to a writable feed
+ *
  * Appends data, and signs off with secret key.
  * This function invalidates all references to internal buffer.
+ *
  * @param feed Writable feed
  * @param data Application data
  * @param d_len Length of data
@@ -137,8 +148,9 @@ int pf_next(const pico_feed_t *feed, struct pf_iterator *iter);
  * @return block height
  */
 int pico_feed_len(const pico_feed_t *feed);
+
 /**
- * @brief removes blocks
+ * @brief Remove blocks
  * @param len
  * @return new block height
  */
@@ -149,6 +161,7 @@ typedef enum {
   UNRELATED,
   DIVERGED
 } pf_diff_error_t;
+
 /**
  * @brief Compare blocks between a and b
  * @param out 0 when equal, positive block count when B is ahead, negative when B is behind.
@@ -157,9 +170,11 @@ typedef enum {
 pf_diff_error_t pico_feed_diff(const pico_feed_t *a, const pico_feed_t *b, int *out);
 
 /**
- * @brief creates a copy
- * Don't forget to pico_feed_deinit(*ptr)
- * or memory will be leaked.
+ * @brief Creates a copy
+ *
+ * Allocates memory which must be released
+ * using pico_feed_deinit();
+ *
  * @param dst empty struct, do not pass an already initialized feed.
  */
 void pf_clone(pico_feed_t *dst, const pico_feed_t *src);
