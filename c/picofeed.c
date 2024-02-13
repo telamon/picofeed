@@ -71,8 +71,29 @@ static int varint_decode (const uint8_t *buffer, int *value) {
   }
   // TODO: return -1; /// Insufficient bytes in buffer
 }
-static void pf_write_date(uint8_t dst[5]);
 
+/* ---------------- POP-08 Time ----------------*/
+#define UINT40_MASK 0xFFFFFFFFFFLLU
+uint64_t pico_now(void) {
+  struct timespec ts;
+  int err = clock_gettime(CLOCK_REALTIME, &ts);
+  error_check(err);
+  // printf("tv_sec: %lu, tv_nsec: %lu\n", ts.tv_sec, ts.tv_nsec);
+  return (100LLU * (uint64_t)(ts.tv_sec - BEGINNING_OF_TIME) + (uint64_t)(ts.tv_nsec / 10000000LLU)) & UINT40_MASK;
+}
+
+static void pf_write_date(uint8_t dst[5]) {
+  uint64_t date = pico_now();
+  // for (int i = 0; i < 5; i++) dst[i] = ((date >> (i * 8)) & 0xff);
+  uint64_t *i = (uint64_t*)dst;
+  *i = date & UINT40_MASK;
+}
+
+uint64_t pf_read_utc(const uint8_t src[5]) {
+  return pf_date_utc((*(uint64_t*)src) & UINT40_MASK);
+}
+
+/* ---------------- POP-02 Format ----------------*/
 /**
  * @brief low level size estimator
  * use pf_sizeof(block) where applicable.
@@ -148,6 +169,8 @@ int pf_verify_block(const pf_block_t *block, const uint8_t public_key[32]) {
   const uint8_t *message = ((void*)block) + PICO_SIG_SIZE;
   return pico_crypto_verify(block->net.id, message, pf_block_size(block->net.length, block->net.magic) - PICO_SIG_SIZE, block->net.author);
 }
+
+/* ---------------- POP-0201 Feed ----------------*/
 
 #define MINIMUM_ALLOCAITION_UNIT 1024
 #define MAXIMUM_FEED_SIZE 65535
@@ -237,16 +260,15 @@ pf_diff_error_t pico_feed_diff(const pico_feed_t *a, const pico_feed_t *b, int *
   struct pf_iterator it_a = {0};
   struct pf_iterator it_b = {0};
   error_check(pf_next(b, &it_b)); // step b
-  int shear = 0;
-  uint8_t found = 0;
+  short found = 0;
   // align feeds
   while(0 == pf_next(a, &it_a)) {
     if (0 == cmp(it_a.block->net.psig, it_b.block->net.psig, PICO_SIG_SIZE)) { ++found; break; }
-    if (0 == cmp(it_a.block->net.id, it_b.block->net.psig, PICO_SIG_SIZE)) { ++found; --shear; break; }
+    if (0 == cmp(it_a.block->net.id, it_b.block->net.psig, PICO_SIG_SIZE)) { --found; break; }
   }
   // printf("[ALIGNMENT] found: %i, idx_a: %i/%i, idx_b: %i/%i, shear: %i\n", found, it_a.idx, len_a, it_b.idx, len_b, shear);
   if (!found && it_a.idx == len_a) return UNRELATED; // End reach no match
-  if (shear == -1) { // B[0].parent is at A[i]
+  if (found == -1) { // B[0].parent is at A[i]
     if (it_a.idx + 1 == len_a) yield(len_b); // all new
     else error_check(pf_next(a, &it_a)); // unshear
   }
@@ -268,25 +290,4 @@ void pf_clone(pico_feed_t *dst, const pico_feed_t *src) {
   dst->buffer = malloc(dst->tail);
   dst->capacity = dst->tail;
   memcpy(dst->buffer, src->buffer, dst->tail);
-}
-
-/* ---------------- POP-08 Time ----------------*/
-#define UINT40_MASK 0xFFFFFFFFFFLLU
-uint64_t pico_now(void) {
-  struct timespec ts;
-  int err = clock_gettime(CLOCK_REALTIME, &ts);
-  error_check(err);
-  // printf("tv_sec: %lu, tv_nsec: %lu\n", ts.tv_sec, ts.tv_nsec);
-  return (100LLU * (uint64_t)(ts.tv_sec - BEGINNING_OF_TIME) + (uint64_t)(ts.tv_nsec / 10000000LLU)) & UINT40_MASK;
-}
-
-static void pf_write_date(uint8_t dst[5]) {
-  uint64_t date = pico_now();
-  // for (int i = 0; i < 5; i++) dst[i] = ((date >> (i * 8)) & 0xff);
-  uint64_t *i = (uint64_t*)dst;
-  *i = date & UINT40_MASK;
-}
-
-uint64_t pf_read_utc(const uint8_t src[5]) {
-  return pf_date_utc((*(uint64_t*)src) & UINT40_MASK);
 }
