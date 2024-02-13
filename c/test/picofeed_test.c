@@ -4,7 +4,6 @@
 #include <time.h>
 #include <ctype.h>
 #include <assert.h>
-#include <signal.h>
 #include "../picofeed.h"
 #include <stdint.h>
 #include "log.h"
@@ -14,10 +13,10 @@
 
 #define OK(exp, desc) do { \
   assert(exp); \
-  if (!(exp)) { log_error("! "desc" - NOT OK!"); return -1; } \
-  else log_info("+ "desc); \
+  log_info("+ "desc); \
 } while (0)
 #define OK0(exp) OK(exp, ".")
+#define debugger __builtin_debugtrap()
 
 void hexdump16(const void* buffer, size_t size) {
   const uint8_t* byteBuffer = (const uint8_t*)buffer;
@@ -83,7 +82,7 @@ static void inspect(const pico_feed_t *feed) {
     }
     ++i;
   }
-  printf("# EOC\n\n");
+  printf("# End Of Chain\n\n");
 }
 
 static int test_pop01_keygen(void) {
@@ -132,17 +131,17 @@ static int test_pop0201_feed(void) {
   int err = pico_feed_init(&feed);
   OK(0 == err, "Feed Initalized");
 
-  const char *m1 = "Presales of hypermodem 11k starting at €20+VAT - pm @telamo[h]n 4 more info";
+  const char *m1 = "Presales of V-modem 11k starting at €20+VAT - pm @telamo[h]n for more info";
   OK(0 < pico_feed_append(&feed, (const uint8_t*)m1, strlen(m1), pair), "M0 appended");
+
   // inspect(&feed);
   const char *m2 = "The prototype units are tiny stock chips that come preloaded with firmware";
   OK(0 < pico_feed_append(&feed, (const uint8_t*)m2, strlen(m2), pair), "M1 appended");
-  OK(0 == memcmp(pico_feed_get(&feed, 1)->net.psig, pico_feed_get(&feed, 0)->net.id, sizeof(pico_signature_t)), "psig is correct");
-  const char *m3 = "It might or might not work, just give it some power";
+  OK(0 == memcmp(pico_feed_get(&feed, 1)->net.psig, pico_feed_get(&feed, 0)->net.id, sizeof(pico_signature_t)), "psig verified");
+  const char *m3 = "It might or might not work, just plug it in and find out.";
   OK(0 < pico_feed_append(&feed, (const uint8_t*)m3, strlen(m3), pair), "M2 appended");
-  // inspect(&feed);
-
-  // __builtin_debugtrap();
+  inspect(&feed);
+  // hexdump(feed.buffer, feed.tail);
   OK(3 == pico_feed_len(&feed), "3 blocks counted");
   pico_feed_truncate(&feed, 2);
   OK(2 == pico_feed_len(&feed), "2 blocks remain");
@@ -160,16 +159,29 @@ static int test_pop0201_feed_diff(void) {
   OK0(0 == pico_feed_init(&b));
   const char m0[] = "hello";
   pico_feed_append(&a, (const uint8_t*)m0, strlen(m0), pair);
-  inspect(&a);
+
   int diff = 0;
-  OK(!pico_feed_diff(&a, &b, &diff) && diff == -1, "A is one block ahead of B");
-  OK(!pico_feed_diff(&b, &a, &diff) && diff == 1, "B is one block behind A");
+  OK(!pico_feed_diff(&a, &b, &diff) && diff == -1, "negative when ahead of other");
+  OK(!pico_feed_diff(&b, &a, &diff) && diff == 1, "positive when behind other");
+
+  // No one-off errors (same result with more blocks in feed)
+  pico_feed_append(&a, (const uint8_t*)m0, strlen(m0), pair);
+  OK0(!pico_feed_diff(&a, &b, &diff) && diff == -2);
+  OK0(!pico_feed_diff(&b, &a, &diff) && diff == 2);
 
   const char m1[] = "world";
   pico_feed_append(&b, (const uint8_t*)m1, strlen(m1), pair);
 
-  __builtin_debugtrap();
-  OK(UNRELATED == pico_feed_diff(&a, &b, &diff), "A and B unrelated");
+  OK(DIVERGED == pico_feed_diff(&a, &b, &diff), "diverged post genesis");
+
+  pico_feed_t c = {0};
+  pf_clone(&c, &a);
+
+  int err = pico_feed_diff(&a, &c, &diff);
+  OK(err == 0 && diff == 0, "0 when equal");
+  pico_feed_deinit(&c);
+
+  // TODO: need a slice to test unrelated
 
   pico_feed_deinit(&a);
   pico_feed_deinit(&b);

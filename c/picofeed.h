@@ -156,6 +156,14 @@ typedef enum {
  */
 pf_diff_error_t pico_feed_diff(const pico_feed_t *a, const pico_feed_t *b, int *out);
 
+/**
+ * @brief creates a copy
+ * Don't forget to pico_feed_deinit(*ptr)
+ * or memory will be leaked.
+ * @param dst empty struct, do not pass an already initialized feed.
+ */
+void pf_clone(pico_feed_t *dst, const pico_feed_t *src);
+
 /* ---------------- POP-08 Time ----------------*/
 /* V7 - Experimental */
 #define BEGINNING_OF_TIME 1577836800

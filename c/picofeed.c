@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <memory.h>
+#include <assert.h>
 // #include <string.h>
 
 /* Borrowing these */
@@ -11,7 +12,7 @@
 #define FOR(i, start, end)         FOR_T(size_t, i, start, end)
 #define COPY(dst, src, size)       FOR(_i_, 0, size) (dst)[_i_] = (src)[_i_]
 #define ZERO(buf, size)            FOR(_i_, 0, size) (buf)[_i_] = 0
-#define CMP(a, b, size)            memcmp(a, b, size)
+#define cmp(a, b, size)            memcmp(a, b, size)
 // #define COPY(dst, src, size) memcpy((dst), (src), (size))
 
 #ifndef PICO_EXTERN_CRYPTO
@@ -234,32 +235,44 @@ pf_block_t* pico_feed_get(const pico_feed_t *feed, int n) {
 pf_diff_error_t pico_feed_diff(const pico_feed_t *a, const pico_feed_t *b, int *out) {
   #define yield(x) do { *out = (x); return OK; } while(0)
   if (a == b) yield(0); // ptr to same memory
-  int i = 0;
-  int j = 0;
   const int len_a = pico_feed_len(a);
   const int len_b = pico_feed_len(b);
   if (!len_a) yield(len_b);
+  if (!len_b) yield(-len_a);
   struct pf_iterator it_a = {0};
   struct pf_iterator it_b = {0};
-  if (0 != pf_next(b, &it_b)) yield(-len_a); // b is empty return length of a
-  // Align B to A
-  for (;0 == pf_next(a, &it_a); ++i) {
-    if (0 == CMP(it_a.block->net.psig, it_b.block->net.psig, PICO_SIG_SIZE)) break;
-    if (0 == CMP(it_a.block->net.id, it_b.block->net.psig, PICO_SIG_SIZE)) { --j; break; }
+  assert(0 == pf_next(b, &it_b)); // step b
+  int shear = 0;
+  uint8_t found = 0;
+  // align feeds
+  while(0 == pf_next(a, &it_a)) {
+    if (0 == cmp(it_a.block->net.psig, it_b.block->net.psig, PICO_SIG_SIZE)) { ++found; break; }
+    if (0 == cmp(it_a.block->net.id, it_b.block->net.psig, PICO_SIG_SIZE)) { ++found; --shear; break; }
   }
-  __builtin_debugtrap();
-  if (i == len_a) return UNRELATED;
-  if (j == -1) { // B[0].parent is at A[i]
-    if (i + 1 == len_a) yield(len_b); // all new
-    else { ++i; ++j; } // step forward
+  printf("[ALIGNMENT] found: %i, idx_a: %i/%i, idx_b: %i/%i, shear: %i\n", found, it_a.idx, len_a, it_b.idx, len_b, shear);
+  if (!found && it_a.idx == len_a) return UNRELATED; // End reach no match
+  if (shear == -1) { // B[0].parent is at A[i]
+    if (it_a.idx + 1 == len_a) yield(len_b); // all new
+    else assert(0 == pf_next(a, &it_a)); // unshear
   }
-  // Compare blocks after common parent
-  for (; 0 == pf_next(a, &it_a) && 0 == pf_next(b, &it_b); (i++, j++)) {
-    if (0 != CMP(it_a.block->net.id, it_b.block->net.id, PICO_SIG_SIZE)) return DIVERGED;
+  // feeds realigned, compare blocks after common parent
+  while(1) {
+    if (0 != cmp(it_a.block->net.id, it_b.block->net.id, PICO_SIG_SIZE)) return DIVERGED;
+    if (!(it_a.idx < len_a && it_b.idx < len_b)) break;
+      pf_next(a, &it_a);
+      pf_next(b, &it_b);
   }
-  if (i == len_a && j == len_b) yield(0); // feeds are equal
-  else if (i == len_a) yield(len_b - j); // A exhausted, remain B
-  else yield(i - len_a); // B exhausted, remain A
+  if (it_a.idx == len_a && it_b.idx == len_b) yield(0); // feeds are equal
+  else if (it_a.idx == len_a) yield(len_b - it_b.idx); // A exhausted, remains of B
+  else yield(it_a.idx - len_a); // B exhausted, remains of A
+}
+
+void pf_clone(pico_feed_t *dst, const pico_feed_t *src) {
+  assert(dst->buffer == NULL);
+  dst->tail = src->tail;
+  dst->buffer = malloc(dst->tail);
+  dst->capacity = dst->tail;
+  memcpy(dst->buffer, src->buffer, dst->tail);
 }
 
 // --- POP-03
