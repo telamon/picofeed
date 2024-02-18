@@ -60,7 +60,9 @@ static int varint_encode (int num, uint8_t *buffer) {
  * does not length check.
  * @return {int} bytes read
  */
-static int varint_decode (const uint8_t *buffer, int *value) {
+static size_t varint_decode (const uint8_t *buffer, int *value) {
+  int tmp = 0;
+  if (value == NULL) value = &tmp; // Discard value, return size only
   *value = 0;
   int i = 0;
   int offset = 0;
@@ -94,11 +96,7 @@ uint64_t pf_read_utc(const uint8_t src[5]) {
 }
 
 /* ---------------- POP-02 Format ----------------*/
-/**
- * @brief low level size estimator
- * use pf_sizeof(block) where applicable.
- */
-size_t pf_block_size(const size_t data_length, const enum pf_block_type type) {
+size_t pf_estimated_block_size(const size_t data_length, const pf_block_type_t type) {
   switch (type & 0b1111) {
     case CANONICAL: return data_length + sizeof(struct pf_block_canon); // 200;
     case GENESIS: return data_length + varint_sizeof(data_length);
@@ -107,9 +105,9 @@ size_t pf_block_size(const size_t data_length, const enum pf_block_type type) {
   }
 }
 
-enum pf_block_type pf_typeof(const pf_block_t *block) {
+pf_block_type_t pf_typeof(const pf_block_t *block) {
   if ((block->bar.magic & 0b11110000) != PICO_MAGIC) return INVALID_BLOCK;
-  enum pf_block_type type = block->bar.magic & 0b1111;
+  pf_block_type_t type = block->bar.magic & 0b1111;
   switch (type) {
     case CANONICAL:
     case GENESIS:
@@ -120,17 +118,35 @@ enum pf_block_type pf_typeof(const pf_block_t *block) {
   }
 }
 
-/**
- * @brief higher level size
- */
 size_t pf_sizeof(const pf_block_t *block) {
-  enum pf_block_type type = pf_typeof(block);
-  if (type == INVALID_BLOCK) return 0;
-  if (type == CANONICAL) return pf_block_size(block->net.length, type);
+  pf_block_type_t type = pf_typeof(block);
+  assert(type != INVALID_BLOCK);
+  if (type == CANONICAL) return pf_estimated_block_size(block->net.length, type);
   int d_len = 0;
   if (type == GENESIS) varint_decode(block->bar.genesis.length, &d_len);
   else varint_decode(block->bar.child.length, &d_len);
-  return pf_block_size(d_len, type);
+  return pf_estimated_block_size(d_len, type);
+}
+
+size_t pf_block_body_size(const pf_block_t *block) {
+  pf_block_type_t type = pf_typeof(block);
+  assert(type != INVALID_BLOCK);
+  if (type == CANONICAL) return block->net.length;
+  int bsize = 0;
+  if (type == GENESIS) varint_decode(block->bar.genesis.length, &bsize);
+  else varint_decode(block->bar.child.length, &bsize);
+  return bsize;
+}
+/// The compact style is starting to feel like a footgun.
+const uint8_t *pf_block_body(const pf_block_t *block) {
+  pf_block_type_t type = pf_typeof(block);
+  assert(type != INVALID_BLOCK);
+  if (type == CANONICAL) return block->net.body;
+  const uint8_t *body_start = type == GENESIS
+    ? block->bar.genesis.length
+    : block->bar.child.length;
+  size_t vlen = varint_decode(body_start, NULL);
+  return body_start + vlen;
 }
 
 /**
@@ -159,7 +175,7 @@ int pf_create_block(
   block->net.length = d_len;
   // if (buffer.length - offset < bsize) return -1 // buffer-underflow
   cpy(block->net.body, data, d_len); // TODO: if body != data
-  size_t b_size = pf_block_size(block->net.length, block->net.magic);
+  size_t b_size = pf_estimated_block_size(block->net.length, block->net.magic);
   const uint8_t *message = buffer + PICO_SIG_SIZE;
   pico_crypto_sign(block->net.id, message, b_size - PICO_SIG_SIZE, pair);
   return b_size;
@@ -167,14 +183,14 @@ int pf_create_block(
 
 int pf_verify_block(const pf_block_t *block, const uint8_t public_key[32]) {
   const uint8_t *message = ((void*)block) + PICO_SIG_SIZE;
-  return pico_crypto_verify(block->net.id, message, pf_block_size(block->net.length, block->net.magic) - PICO_SIG_SIZE, block->net.author);
+  return pico_crypto_verify(block->net.id, message, pf_estimated_block_size(block->net.length, block->net.magic) - PICO_SIG_SIZE, block->net.author);
 }
 
 /* ---------------- POP-0201 Feed ----------------*/
 
 #define MINIMUM_ALLOCAITION_UNIT 1024
 #define MAXIMUM_FEED_SIZE 65535
-int pico_feed_init(pico_feed_t *feed) {
+int pf_init(pico_feed_t *feed) {
   zro((uint8_t*)feed, sizeof(pico_feed_t));
   feed->buffer = malloc(MINIMUM_ALLOCAITION_UNIT);
   if (feed->buffer == NULL) return -1;
@@ -183,12 +199,12 @@ int pico_feed_init(pico_feed_t *feed) {
   return 0;
 }
 
-void pico_feed_deinit(pico_feed_t *feed) {
+void pf_deinit(pico_feed_t *feed) {
   free(feed->buffer);
   zro((uint8_t*)feed, sizeof(pico_feed_t));
 }
 
-pf_block_t* pf_feed_last(const pico_feed_t *feed) {
+pf_block_t* pf_last(const pico_feed_t *feed) {
   pf_block_t *block = NULL;
   struct pf_iterator iter = {0};
   while (pf_next(feed, &iter) == 0) {
@@ -204,9 +220,9 @@ static int grow(pico_feed_t *feed, size_t min_cap) {
   return 0;
 };
 
-int pico_feed_append(pico_feed_t *feed, const uint8_t *data, const size_t d_len, const pico_keypair_t pair) {
-  pf_block_t *last = pf_feed_last(feed);
-  const size_t b_size = pf_block_size(d_len, CANONICAL);
+int pf_append(pico_feed_t *feed, const uint8_t *data, const size_t d_len, const pico_keypair_t pair) {
+  pf_block_t *last = pf_last(feed);
+  const size_t b_size = pf_estimated_block_size(d_len, CANONICAL);
   if (b_size > feed->capacity - feed->tail) {
     int err = grow(feed, feed->tail + b_size);
     if (err) return err;
@@ -228,13 +244,13 @@ int pf_next(const pico_feed_t *feed, struct pf_iterator *iter) {
   return 0;
 }
 
-int pico_feed_len(const pico_feed_t *feed) {
+int pf_len(const pico_feed_t *feed) {
   struct pf_iterator iter = {0};
   while (0 == pf_next(feed, &iter));
   return iter.idx;
 }
 
-void pico_feed_truncate(pico_feed_t *feed, int n) {
+void pf_truncate(pico_feed_t *feed, int n) {
   struct pf_iterator iter = {0};
   while (0 == pf_next(feed, &iter)) {
     if (!n) feed->tail = iter.offset;
@@ -242,7 +258,7 @@ void pico_feed_truncate(pico_feed_t *feed, int n) {
   }
 }
 
-pf_block_t* pico_feed_get(const pico_feed_t *feed, int n) {
+pf_block_t* pf_get(const pico_feed_t *feed, int n) {
   struct pf_iterator iter = {0};
   while (0 == pf_next(feed, &iter)) {
     if (!n--) return iter.block;
@@ -250,11 +266,11 @@ pf_block_t* pico_feed_get(const pico_feed_t *feed, int n) {
   return NULL;
 }
 
-pf_diff_error_t pico_feed_diff(const pico_feed_t *a, const pico_feed_t *b, int *out) {
+pf_diff_error_t pf_diff(const pico_feed_t *a, const pico_feed_t *b, int *out) {
   #define yield(x) do { *out = (x); return OK; } while(0)
   if (a == b) yield(0); // ptr to same memory
-  const int len_a = pico_feed_len(a);
-  const int len_b = pico_feed_len(b);
+  const int len_a = pf_len(a);
+  const int len_b = pf_len(b);
   if (!len_a) yield(len_b);
   if (!len_b) yield(-len_a);
   struct pf_iterator it_a = {0};
@@ -291,3 +307,35 @@ void pf_clone(pico_feed_t *dst, const pico_feed_t *src) {
   dst->capacity = dst->tail;
   memcpy(dst->buffer, src->buffer, dst->tail);
 }
+
+int pf_slice(
+    pico_feed_t *dst,
+    const pico_feed_t *src,
+    int start_idx,
+    int end_idx
+) {
+  if (start_idx < 0 || end_idx < 0) {
+    const int src_len = pf_len(src);
+    if (start_idx < 0) start_idx = src_len + start_idx;
+    if (end_idx < 0) end_idx = src_len + end_idx + 1;
+  }
+  int len = 0;
+  struct pf_iterator iter = {0};
+  int i = 0;
+  int off = 0;
+  while (!pf_next(src, &iter) && i < end_idx) {
+    if (i++ < start_idx) {
+      off = iter.offset;
+      continue;
+    }
+    len += pf_sizeof(iter.block);
+  }
+  if (!len) return 0; // Nothing to do
+  if (dst->buffer != NULL) pf_truncate(dst, 0);
+  else assert(0 == pf_init(dst));
+  if (dst->capacity < len) grow(dst, len);
+  memcpy(dst->buffer, src->buffer + off, len);
+  dst->tail = len;
+  return i - start_idx; // TODO: return len maybe?
+}
+

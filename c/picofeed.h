@@ -39,13 +39,14 @@ int pico_crypto_verify(const pico_signature_t signature, const uint8_t *message,
 /*---------------- POP-02: BLOCK FORMAT ----------------*/
 #define PICO_MAGIC 0b10100000
 
-enum pf_block_type {
+typedef enum {
   INVALID_BLOCK = -1,
   CANONICAL = 0,
+  // COMPACT = 1
   GENESIS,
   // RESERVED = 2
   FOLLOW = 3
-};
+} pf_block_type_t;
 
 /* TODO: update specs */
 
@@ -82,14 +83,34 @@ typedef union _pack {
   struct pf_block_anon bar;
 } pf_block_t;
 
-// high level api uses prefix 'pico'
-// low level api uses prefix 'pf'
-// when in doubt use pico.
-
 int pf_create_block(uint8_t *buffer, const uint8_t *message, size_t m_len, const pico_keypair_t pair, const pico_signature_t *parent);
 int pf_verify_block(const pf_block_t *block, const uint8_t public_key[32]);
-size_t pf_sizeof(const pf_block_t *block);
 
+/**
+ * @brief get block format
+ */
+pf_block_type_t pf_typeof(const pf_block_t *block);
+
+/**
+ * @brief low level size estimator
+ * use pf_sizeof(block) where applicable.
+ */
+size_t pf_estimated_block_size(const size_t data_length, const pf_block_type_t type);
+/**
+ * @brief Size of entire block
+ * @return size of block header + body
+ */
+size_t pf_sizeof(const pf_block_t *block);
+/**
+ * @brief Size of block-body
+ * @return size of block body / application data.
+ */
+size_t pf_block_body_size(const pf_block_t *block);
+/**
+ * @brief Location of body
+ * @return pointer to start of body
+ */
+const uint8_t *pf_block_body(const pf_block_t *block);
 /* --------------- POP-0201 Feed ---------------*/
 typedef struct {
   size_t tail;
@@ -106,7 +127,7 @@ typedef struct {
  * @param feed pointer to mutable feed struct
  * @return error code
  */
-int pico_feed_init(pico_feed_t *feed);
+int pf_init(pico_feed_t *feed);
 
 /**
  * @brief Deinitalizes a writable feed
@@ -114,7 +135,7 @@ int pico_feed_init(pico_feed_t *feed);
  * by `pico_feed_init()`
  * @param feed Writable feed
  */
-void pico_feed_deinit(pico_feed_t *feed);
+void pf_deinit(pico_feed_t *feed);
 
 /**
  * @brief Appends block to a writable feed
@@ -128,11 +149,11 @@ void pico_feed_deinit(pico_feed_t *feed);
  * @param pair author's secret
  * @return 0 on successful new element, 1 on EOF, -1 on error
  */
-int pico_feed_append(pico_feed_t *feed, const uint8_t *data, const size_t d_len, const pico_keypair_t pair);
+int pf_append(pico_feed_t *feed, const uint8_t *data, const size_t d_len, const pico_keypair_t pair);
 
 struct pf_iterator {
   uint16_t idx;
-  enum pf_block_type type;
+  pf_block_type_t type;
   size_t offset;
   pf_block_t *block;
 };
@@ -147,15 +168,27 @@ int pf_next(const pico_feed_t *feed, struct pf_iterator *iter);
  * @brief Count Blocks in a Feed
  * @return block height
  */
-int pico_feed_len(const pico_feed_t *feed);
+int pf_len(const pico_feed_t *feed);
 
 /**
  * @brief Remove blocks
  * @param len
  * @return new block height
  */
-void pico_feed_truncate(pico_feed_t *feed, int len);
-pf_block_t* pico_feed_get(const pico_feed_t *feed, int n);
+void pf_truncate(pico_feed_t *feed, int len);
+/**
+ * @brief Get block at index
+ * @param n index
+ * @return block pointer
+ */
+pf_block_t* pf_get(const pico_feed_t *feed, int n);
+
+/**
+ * @brief Get tail of feed
+ * @return block pointer
+ */
+pf_block_t* pf_last(const pico_feed_t *feed);
+
 typedef enum {
   OK = 0,
   UNRELATED,
@@ -167,7 +200,7 @@ typedef enum {
  * @param out 0 when equal, positive block count when B is ahead, negative when B is behind.
  * @return error
  */
-pf_diff_error_t pico_feed_diff(const pico_feed_t *a, const pico_feed_t *b, int *out);
+pf_diff_error_t pf_diff(const pico_feed_t *a, const pico_feed_t *b, int *out);
 
 /**
  * @brief Creates a copy
@@ -178,6 +211,16 @@ pf_diff_error_t pico_feed_diff(const pico_feed_t *a, const pico_feed_t *b, int *
  * @param dst empty struct, do not pass an already initialized feed.
  */
 void pf_clone(pico_feed_t *dst, const pico_feed_t *src);
+
+/**
+ * @brief Copies sub range of blocks
+ * @param dst target uninitalized feed
+ * @param src feed to copy from
+ * @param start_id inclusive, negative wraps from src.end
+ * @param end_idx exclusive, negative wraps from src.end
+ * @return number of blocks copied, value < 0 indicates error
+ */
+int pf_slice(pico_feed_t *dst, const pico_feed_t *src, int start_idx, int end_idx);
 
 /* ---------------- POP-08 Time ----------------*/
 /* V7 - Experimental */
