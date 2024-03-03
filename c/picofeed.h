@@ -225,6 +225,7 @@ int pf_slice(pico_feed_t *dst, const pico_feed_t *src, int start_idx, int end_id
 /* ---------------- POP-08 Time ----------------*/
 /* V7 - Experimental */
 #define BEGINNING_OF_TIME 1577836800
+#define UINT40_MASK 0xFFFFFFFFFFLLU
 /**
  * @brief Truncated UTC timestamp
  *
@@ -241,7 +242,7 @@ uint64_t pico_now(void);
  * @brief Decode pico-hundreds to epoch-millis
  */
 #define pf_date_utc(pf40bit_time) ((pf40bit_time) + BEGINNING_OF_TIME * 100LLU) * 10LLU
-
+#define pf_utc_to_pop8(utc_time) (((utc_time) / 10LLU) - (BEGINNING_OF_TIME * 100LLU))
 /**
  * @brief Parses block "date" fields
  */

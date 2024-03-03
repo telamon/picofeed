@@ -75,7 +75,6 @@ static size_t varint_decode (const uint8_t *buffer, int *value) {
 }
 
 /* ---------------- POP-08 Time ----------------*/
-#define UINT40_MASK 0xFFFFFFFFFFLLU
 uint64_t pico_now(void) {
   struct timespec ts;
   int err = clock_gettime(CLOCK_REALTIME, &ts);
