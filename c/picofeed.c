@@ -29,9 +29,11 @@ void pico_crypto_keypair(pico_keypair_t *pair) {
   uint8_t _[32] = {0};
   crypto_eddsa_key_pair(pair->secret, _, seed);
 }
+
 void pico_crypto_sign(pico_signature_t signature, const uint8_t *message, const size_t m_len, const pico_keypair_t pair) {
   crypto_eddsa_sign(signature, pair.secret, message, m_len);
 }
+
 int pico_crypto_verify(const pico_signature_t signature, const uint8_t *message, const size_t m_len, const uint8_t pk[32]) {
   return crypto_eddsa_check(signature, pk, message, m_len);
 };
@@ -72,6 +74,65 @@ static size_t varint_decode (const uint8_t *buffer, int *value) {
     if (!(b & 0x80)) return i;
   }
   // TODO: return -1; /// Insufficient bytes in buffer
+}
+/* --------------- POP-0801 Reverse PoWmem Header
+ * Using negative indices we can map the signature
+ * into memory space and store the most minimal header.
+ * Size.
+ */
+// Varchars are the most space efficient and scale well with bit size
+struct pop0801_block {
+  uint8_t sig[64]; // TODO: encode sizeof(data) as varchar into last bits.
+  uint8_t *data;
+};
+
+typedef struct pop0801_block picolol_block_t;
+// that's it for sig + length + payload
+// Every else thing goes into data
+
+uint16_t reverse_bits(uint16_t n) {
+    n = ((n >> 1) & 0x5555) | ((n << 1) & 0xAAAA);
+    n = ((n >> 2) & 0x3333) | ((n << 2) & 0xCCCC);
+    n = ((n >> 4) & 0x0F0F) | ((n << 4) & 0xF0F0);
+    n = ((n >> 8) & 0x00FF) | ((n << 8) & 0xFF00);
+    return n;
+}
+#include <stdio.h>
+
+/**
+ * @brief Signs a negative overhead powmem block
+ * @param buffer expected length 64bytes + `data_length`;
+ * @param data_length size of application data
+ * @param pair secret key
+ * @return int 0 = success, <0 on error
+ */
+uint8_t pico_sign0801(
+    uint8_t *buffer,
+    size_t data_length,
+    const pico_keypair_t pair
+) {
+  // picolol_block_t *block = (picolol_block_t*)buffer;
+  // zro(block->sig, sizeof(block->sig));
+  uint16_t v = reverse_bits(data_length & 0xffff);
+  // if (data_length > 65536) @panic("Unsupported")
+  // int n = varint_encode(data_length, (uint8_t*) &vsize);
+  // n = reverse_bits(n); // write backwards into negative space
+  uint16_t *u = ((uint16_t*) &buffer[62]);
+  uint64_t *nonce = ((uint64_t*)&buffer[64]);
+  *nonce = 0;
+  do {
+    pico_crypto_sign(buffer, &buffer[64], data_length, pair);
+    ++*nonce;
+    if (!(*nonce % 1024)) printf("Rolling %u == %u, %i\n", v, *u, *u == v);
+  } while (nonce && *u != v);
+  printf("Rolling %u == %u, %i\n", v, *u, *u == v);
+  // __builtin_debugtrap();
+  printf("PtrSIG: %p, PtrData %p, Data: %s\n",
+      buffer,
+      &buffer[64],
+      &buffer[64]
+      );
+  return 0;
 }
 
 /* ---------------- POP-08 Time ----------------*/

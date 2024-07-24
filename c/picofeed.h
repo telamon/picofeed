@@ -246,4 +246,6 @@ uint64_t pico_now(void);
  * @brief Parses block "date" fields
  */
 uint64_t pf_read_utc(const uint8_t src[5]);
+
+uint8_t pico_sign0801(uint8_t *buffer, size_t data_length, const pico_keypair_t pair);
 #endif

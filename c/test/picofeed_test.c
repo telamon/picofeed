@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <memory.h>
+#include <string.h>
 #include <strings.h>
 #include <time.h>
 #include <ctype.h>
@@ -249,6 +250,22 @@ static int test_pop0201_feed_merge(void) {
   pf_deinit(&fa);
   return 0;
 }
+static int test_pop0801_powmem_picolol (void) {
+  pico_keypair_t pair = {0};
+  pico_crypto_keypair(&pair);
+  log_info("Secret:");
+  hexdump(pair.secret, sizeof(pair.secret));
+  const uint8_t msg[] = "  RNG0D says: Hello mortals";
+  uint8_t *buffer = malloc(PICO_SIG_SIZE + sizeof(msg));
+  memset(buffer, 0, PICO_SIG_SIZE + sizeof(msg));
+  mempcpy(&buffer[64], &msg, sizeof(msg));
+  log_info("Block:");
+  hexdump(buffer, PICO_SIG_SIZE + sizeof(msg));
+  OK(0 == pico_sign0801(buffer, sizeof(msg), pair), "signature found");
+  hexdump(buffer, PICO_SIG_SIZE + sizeof(msg));
+  free(buffer);
+  return 0;
+}
 
 #define run_test(FUNC) do { \
   if ((FUNC()) != 0) { \
@@ -259,6 +276,7 @@ static int test_pop0201_feed_merge(void) {
 int main(void) {
   uint64_t start = pico_now();
   log_info("Test start");
+  run_test(test_pop0801_powmem_picolol);
   run_test(test_pop01_keygen);
   run_test(test_pop02_blocksegment);
   run_test(test_pop0201_feed);
