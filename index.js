@@ -1,5 +1,5 @@
 import { ed25519 } from '@noble/curves/ed25519'
-import { bytesToHex, hexToBytes, u32 } from '@noble/hashes/utils'
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils'
 // ------ Constants
 export const symInspect = Symbol.for('nodejs.util.inspect.custom')
 export const symFeed = Symbol.for('PIC0::Feed')
@@ -70,19 +70,6 @@ export function getPublicKey (secret) {
   return toHex(ed25519.getPublicKey(secret))
 }
 
-/* ------ POP-02: Binary encoding (TODO: update telamon/pops)
- * A picofeed is a binary sequence of blocks and keys.
- * It uses a 4bit marker to identify
- * each segment and to describe it's type,
- * we call it 'fmt' byte.
- *
- * High nibble: 1011 -- reserved
- * Low nibble:
- *  bit0: Type // Key: 0, Block = 1
- *  bit1: Genesis
- *  bit2: 0 -- reserved
- *  bit3: End of Chain
- */
 export const PIC0 = s2b('PIC0')
 // <16 RESERVED KNOWN SIZE HEADERS
 export const HDR_AUTHOR = 1
@@ -94,10 +81,10 @@ export const HDR_PSIG = 2
 /**
  * Estimates size of a block given it's body.
  * @param {usize} dataLength Length of data
- * @param {HDR[]} genesis First block?
+ * @param {Array} headers added headers
  * @returns {usize} amount of bytes
  */
-export function sizeOfBlockSegment (dataLength, headers=[]) {
+export function sizeOfBlockSegment (dataLength, headers = []) {
   dataLength = _sizeOfDAT(dataLength, headers)
   const varsize = varintEncode(dataLength)
   return 64 + varsize + dataLength
@@ -194,11 +181,15 @@ export class Block { // BlockMapper
       }
     }
   }
-  /** @type {number} */
+
+  /** @type {boolean} */
   get genesis () { return !this.#psig }
+
   /** @returns {SignatureBin} */
   get sig () { return this.buffer.subarray(0, 64) }
+
   get id () { return this.sig }
+
   /** @returns {SignatureBin} */
   get psig () {
     /** returning an new empty u8 is deprecated */
@@ -215,13 +206,13 @@ export class Block { // BlockMapper
     return this.buffer.subarray(this.#bodyOffset, this.#bodyOffset + this.size)
   }
 
+  get __key () { return undefined }
   set __key (pk) { this.#key ||= au8(pk, 64) } // anonblocks are a bit funky
 
   _brick () {
     this.buffer[64] = 0
     return this.blockSize
   }
-
 
   get key () { return this.#key }
   verify (pk = this.#key) {
@@ -232,7 +223,6 @@ export class Block { // BlockMapper
   }
 
   toString () {
-    const fmt = (this.fmt & 0b1111).toString(2).padStart(4, '0')
     const key = this.key && toHex(this.key.slice(0, 3))
     const bodyhex = toHex(this.sig.slice(0, 4))
       .replace(/(.{2})/g, '$1 ')
@@ -242,7 +232,7 @@ export class Block { // BlockMapper
     const psig = this.genesis
       ? 'GENESIS'
       : toHex(this.psig.slice(0, 4))
-    return JSON.stringify({ fmt, key, sig, psig, size: this.size, bodyhex, body })
+    return JSON.stringify({ key, sig, psig, size: this.size, bodyhex, body })
   }
 
   [symInspect] () { return this.toString() }
@@ -254,7 +244,7 @@ export class Feed {
   static isFeed = isFeed
   static isBlock = isBlock
   static from = feedFrom
-  /** @type {number} used bytes in feed*/
+  /** @type {number} used bytes in feed */
   tail = 0
 
   /**
@@ -489,8 +479,6 @@ export class Feed {
 
   * _rebase (blocks) {
     let size = 0
-    const keys = [...this.keys]
-    const klen = keys.length
     const sigKeyMap = {} // trade mem for cpu
     for (const b of blocks) {
       size += b.blockSize
@@ -565,7 +553,6 @@ export function macrofilm (f, w = 40, m = 32) {
   return str + lb('_')
 }
 
-
 /** Encodes number as varint into buffer@offset
  * @return {number} number of bytes written */
 export function varintEncode (num, buffer = [], offset = 0) {
@@ -592,7 +579,10 @@ export function varintDecode (buffer, offset = 0) {
 }
 
 /** A.k.a inspect buffer
-  * @param {Uint8Array} bytes */
+  * @param {Uint8Array} bytes Bytes to inspect
+  * @param {boolean|function} log Log function
+  * @param {number} width Width of lines to print
+  * */
 export function hexdump (bytes, log = false, width = 16) {
   // TODO: nice to have, save runtime type Uint8Array|ArrayBuffer|node:Buffer|Array<number>|string
   bytes = toU8(bytes)
