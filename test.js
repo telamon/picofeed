@@ -1,5 +1,5 @@
 import { webcrypto } from 'node:crypto'
-import { test, solo, skip } from 'brittle'
+import { test, skip } from 'brittle'
 import {
   Feed,
   signPair,
@@ -60,13 +60,12 @@ test('POP-02 spec, rework version 8', async t => {
   // rebase.inspect()
 
   t.is(rebase.length, 2, '2 blocks imported')
-  t.is(rebase.tail, offset +4 , 'tail is correct (+ PiC0)')
+  t.is(rebase.tail, offset + 4, 'tail is correct (+ PiC0)')
   hexdump(block2)
   hexdump(block2, () => {})
   hexdump(block2, 1)
   rebase.inspect()
 })
-
 
 test('POP-0201 Feed.new(), append(), blocks(), keys(), clone()', async t => {
   const feed = new Feed()

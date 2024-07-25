@@ -291,6 +291,7 @@ export class Feed {
     if (typeof data === 'string') data = s2b(data)
     const hdrs = [HDR_AUTHOR]
     const pblock = this.last
+    // @ts-ignore
     if (pblock) hdrs.push([HDR_PSIG, pblock.sig])
     const bsize = sizeOfBlockSegment(data.length, hdrs)
     this.#grow(this.tail + bsize)
