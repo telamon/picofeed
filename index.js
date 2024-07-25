@@ -1,5 +1,5 @@
 import { ed25519 } from '@noble/curves/ed25519'
-import { bytesToHex, hexToBytes } from '@noble/hashes/utils'
+import { bytesToHex, hexToBytes, u32 } from '@noble/hashes/utils'
 // ------ Constants
 export const symInspect = Symbol.for('nodejs.util.inspect.custom')
 export const symFeed = Symbol.for('PIC0::Feed')
@@ -9,7 +9,7 @@ export const symBlock = Symbol.for('PIC0::Block')
 /** assert Uint8Array[length]
   * @type {(a: Uint8Array, l?: number) => Uint8Array} */
 export const au8 = (a, l) => {
-  if (!(a instanceof Uint8Array) || (typeof l === 'number' && l > 0 && a.length !== l)) throw new Error('Uint8Array expected')
+  if (!(a instanceof Uint8Array) || (typeof l === 'number' && l > 0 && a.length !== l)) throw new Error(`Expected Uint8Array, received: ${a}`)
   else return a
 }
 export const toHex = (buf, limit = 0) => bytesToHex(limit ? buf.slice(0, limit) : buf)
@@ -84,49 +84,70 @@ export function getPublicKey (secret) {
  *  bit3: End of Chain
  */
 export const PIC0 = s2b('PIC0')
-export const fmtKEY = 0b10110000
-export const fmtBLK = 0b10110001 // fmt is not covered by signature
-export const sizeOfKeySegment = 33 // v0
+// <16 RESERVED KNOWN SIZE HEADERS
+export const HDR_AUTHOR = 1
+export const HDR_PSIG = 2
+// 32..64 FIXED SIZE HEADERS uint16 values
+// 64..96 FIXED SIZE HEADERS uint32 values
+// >128 APPLICATION DEFINED HEADERS
 
 /**
  * Estimates size of a block given it's body.
- * @param {usize} dLen Length of data
- * @param {boolean} genesis First block?
- * @returns {usize}
+ * @param {usize} dataLength Length of data
+ * @param {HDR[]} genesis First block?
+ * @returns {usize} amount of bytes
  */
-export function sizeOfBlockSegment (dLen, genesis = false) {
-  if (!usize(dLen)) throw new Error('Expected positive integer')
-  dLen += varintEncode(dLen)
-  if (!genesis) dLen += 64
-  return dLen + 1 + 64
+export function sizeOfBlockSegment (dataLength, headers=[]) {
+  dataLength = _sizeOfDAT(dataLength, headers)
+  const varsize = varintEncode(dataLength)
+  return 64 + varsize + dataLength
 }
 
-export function createKeySegment (key, b, offset = 0) {
-  au8(b)
-  if (b.length < sizeOfKeySegment) throw new Error('BufferUnderflow')
-  key = au8(toU8(key), 32)
-  b.set(key, offset + 1)
-  b[offset] = fmtKEY // RESV|V0|KEY
-  return b.slice(offset, offset + sizeOfKeySegment)
+function _sizeOfDAT (dataLength, headers = []) {
+  if (!usize(dataLength)) throw new Error('Expected positive integer')
+  for (const hdr of headers) {
+    const type = Array.isArray(hdr) ? hdr[0] : hdr
+    if (!Number.isInteger(type)) throw new Error(`InvalidHeader: ${type}`)
+    switch (type) {
+      case HDR_PSIG: dataLength += 2 + 64; break
+      case HDR_AUTHOR: dataLength += 2 + 32; break
+      default: throw new Error(`UnknownHeaderSize: ${type}: ${hdr}`)
+    }
+  }
+  return dataLength
 }
 
-export function createBlockSegment (data, sk, psig, buffer, offset = 0) {
+export function createBlockSegment (buffer, offset = 0, data, sk, headers = []) {
   au8(buffer)
   if (typeof data === 'string') data = s2b(data)
-  const o1 = psig ? 64 : 0
-  const bsize = sizeOfBlockSegment(data.length, !psig)
-
+  if (data[0] === 0) throw new Error('First byte of data must be non-zero') // Cause no data starts with zero
+  const datSize = _sizeOfDAT(data.length, headers)
+  const bsize = 64 + varintEncode(datSize) + datSize // sizeOfBlockSegment(data.length, headers)
   if (buffer.length - offset < bsize) throw new Error('BufferUnderflow')
   buffer = buffer.subarray(offset, offset + bsize)
-  const o2 = varintEncode(data.length, buffer, 1 + 64 + o1)
-
-  if (psig) buffer.set(psig, 1 + 64)
-  buffer.set(data, 1 + 64 + o1 + o2)
-
-  const message = buffer.subarray(1 + 64)
+  let o = 64 // sizeof SIG
+  o += varintEncode(datSize, buffer, o)
+  for (const hdr of headers) {
+    const type = Array.isArray(hdr) ? hdr[0] : hdr
+    const args = Array.isArray(hdr) && hdr.slice(1)
+    buffer[o++] = 0x0
+    buffer[o++] = type & 0xff
+    switch (type) {
+      case HDR_AUTHOR:
+        buffer.set(fromHex(getPublicKey(sk)), o)
+        o += 32
+        break
+      case HDR_PSIG:
+        buffer.set(au8(args[0], 64), o)
+        o += 64
+        break
+      default: throw new Error(`UnknownHeader: ${hdr}`)
+    }
+  }
+  buffer.set(data, o)
+  const message = buffer.subarray(64)
   const sig = ed25519.sign(message, sk)
-  buffer.set(sig, 1)
-  buffer[0] = fmtBLK | 0b1000 | (psig ? 0b10 : 0)
+  buffer.set(sig, 0)
   return buffer
 }
 
@@ -136,54 +157,77 @@ export function createBlockSegment (data, sk, psig, buffer, offset = 0) {
 /** @typedef {(block: Block, stop: (after: boolean) => void) => void} InteractiveMergeCallback */
 /** @typedef {Uint8Array} SignatureBin */
 export class Block { // BlockMapper
-  [symBlock] = 5 // v4
-  #blksz = 0
-  #size = 0
-  #sizeOffset = 0
+  [symBlock] = 8 // v8
+  #blksz = 0 // block size
+  #size = 0 // body-size
+  #bodyOffset = 0
+  #key = undefined
+  #psig = undefined
+  /** @type {Uint8Array} */
+  buffer = null
   constructor (buffer, offset = 0) {
     au8(buffer)
-    const fmt = buffer[offset]
-    if ((fmt & 0b11110001) !== fmtBLK) throw new Error('InvalidBlockSegment')
-    const isGenesis = !(fmt & 0b10)
-    this.offset = offset
-    const szo = offset + 1 + 64 + (isGenesis ? 0 : 64)
-    const [ds, so] = varintDecode(buffer, szo)
-    this.#size = ds
-    this.#sizeOffset = so
-    this.#blksz = sizeOfBlockSegment(this.#size, isGenesis)
+    // Scan block contents
+    const [dataSize, vo] = varintDecode(buffer, offset + 64)
+    this.#blksz = dataSize + 64 + vo
+    this.#size = dataSize
     if (buffer.length < offset + this.#blksz) throw new Error('BufferUnderflow')
     this.buffer = buffer.subarray(offset, offset + this.#blksz)
-  }
+    // No more absolute offsets
+    this.#bodyOffset = 64 + vo
 
+    // HDR sections
+    while (this.buffer[this.#bodyOffset] === 0) {
+      this.#bodyOffset++
+      const type = this.buffer[this.#bodyOffset++]
+      switch (type) {
+        case HDR_AUTHOR:
+          this.#key = this.buffer.subarray(this.#bodyOffset, this.#bodyOffset + 32)
+          this.#bodyOffset += 32; this.#size -= 32
+          break
+        case HDR_PSIG:
+          this.#psig = this.buffer.subarray(this.#bodyOffset, this.#bodyOffset + 64)
+          this.#bodyOffset += 64; this.#size -= 64
+          break
+        // c8 ignore next
+        default: throw new Error(`DecodedUnknownHeader: ${type}`)
+      }
+    }
+  }
   /** @type {number} */
-  get fmt () { return this.buffer[0] }
-  set fmt (n) { this.buffer[0] = n }
-  get genesis () { return !(this.fmt & 0b10) }
-  get eoc () { return !!(this.fmt & 0b1000) }
-  set eoc (v) { this.fmt = (this.fmt & 0b11110111) | (v ? 0b1000 : 0) }
+  get genesis () { return !this.#psig }
   /** @returns {SignatureBin} */
-  get sig () { return this.buffer.subarray(1, 1 + 64) }
+  get sig () { return this.buffer.subarray(0, 64) }
   get id () { return this.sig }
   /** @returns {SignatureBin} */
   get psig () {
-    if (this.genesis) return new Uint8Array(64) // throw new Error('GenesisNoParent')
-    return this.buffer.subarray(65, 65 + 64)
+    /** returning an new empty u8 is deprecated */
+    return !this.genesis ? this.#psig : new Uint8Array(64)
   }
 
+  /** @returns {usize} Size of body */
   get size () { return this.#size }
+  /** @returns {usize} total size of block */
   get blockSize () { return this.#blksz }
-  get end () { return this.offset + this.#blksz }
+  get end () { throw new Error('Block.end deprecated') } // return this.offset + this.#blksz }
   /** @returns {Uint8Array} */
   get body () {
-    const o = 1 + 64 + (this.genesis ? 0 : 64) + this.#sizeOffset
-    return this.buffer.subarray(o, o + this.size)
+    return this.buffer.subarray(this.#bodyOffset, this.#bodyOffset + this.size)
   }
 
-  get key () { return this._pk }
-  verify (pk) {
-    const message = this.buffer.subarray(65, this.#blksz)
+  set __key (pk) { this.#key ||= au8(pk, 64) } // anonblocks are a bit funky
+
+  _brick () {
+    this.buffer[64] = 0
+    return this.blockSize
+  }
+
+
+  get key () { return this.#key }
+  verify (pk = this.#key) {
+    const message = this.buffer.subarray(64, this.#blksz)
     const v = ed25519.verify(this.sig, message, pk)
-    if (v) this._pk = pk
+    if (v) this.#key ||= pk
     return v
   }
 
@@ -205,12 +249,12 @@ export class Block { // BlockMapper
 }
 
 export class Feed {
-  [symFeed] = 5 // v5
+  [symFeed] = 8 // version 8
   static signPair = signPair
   static isFeed = isFeed
   static isBlock = isBlock
   static from = feedFrom
-  /** @type {number} */
+  /** @type {number} used bytes in feed*/
   tail = 0
 
   /**
@@ -255,19 +299,13 @@ export class Feed {
    */
   append (data, sk) {
     if (typeof data === 'string') data = s2b(data)
-    const pk = ed25519.getPublicKey(sk)
-    if (!this.keys.find(k => cmp(k, pk))) {
-      this.#grow(this.tail + sizeOfKeySegment)
-      createKeySegment(pk, this._buf, this.tail)
-      this.tail += sizeOfKeySegment
-    }
-    const bsize = sizeOfBlockSegment(data.length, !this.last)
-    this.#grow(this.tail + bsize)
-
+    const hdrs = [HDR_AUTHOR]
     const pblock = this.last
-    createBlockSegment(data, sk, pblock?.sig, this._buf, this.tail)
+    if (pblock) hdrs.push([HDR_PSIG, pblock.sig])
+    const bsize = sizeOfBlockSegment(data.length, hdrs)
+    this.#grow(this.tail + bsize)
+    createBlockSegment(this._buf, this.tail, data, sk, hdrs)
     this.tail += bsize
-    if (pblock) pblock.eoc = false
     return this.length
   }
 
@@ -305,30 +343,28 @@ export class Feed {
     const c = this._c // cache
     // Skip magic
     if (!c.offset && cmp(this._buf.subarray(0, 4), PIC0)) c.offset = 4
-    let eoc = false
-    while (!eoc) {
-      const seg = nextSegment(this._buf, c.offset)
-      switch (seg.type) {
-        case 0:
-          c.keys.push(seg.key)
-          c.offset += sizeOfKeySegment
-          break
-        case 1: { // BLK
-          const { block } = seg
-          const p = c.blocks[c.blocks.length - 1]
-          if (p?.eoc) throw new Error('Attempted to index past EOC')
-          if (p && !cmp(p.sig, block.psig)) throw new Error('InvalidParent')
-          const ki = preverified[toHex(block.sig)]
-          if (c.keys[ki]) block._pk = c.keys[ki] // optimization
-          else if (!c.keys.find(k => block.verify(k))) throw new Error('InvalidFeed')
-          c.blocks.push(block)
-          c.offset = block.end
-          eoc = block.eoc // Safe exit
-        } break
-        default: return // Stop indexing on first unkown byte
-      }
+
+    do {
+      // Detect end of feed
+      if (this._buf.length - c.offset < 64 + 1 + 1) break // Minimum block size
+      if (!this._buf[c.offset + 64]) break // no data
+      const [assumedSize, vs] = varintDecode(this._buf, c.offset + 64)
+      if (this._buf.length - (c.offset + vs) < assumedSize) break
+
+      // Load block
+      const block = new Block(this._buf, c.offset)
+      const p = c.blocks[c.blocks.length - 1]
+      if (p && !cmp(p.sig, block.psig)) throw new Error('InvalidParent')
+      const known = preverified[toHex(block.sig)]
+      if (known) block.__key = known // optimization / skip verification
+      else if (// use embedded HDR_AUTHOR || seek key
+        !(block.key ? block.verify() : c.keys.find(k => block.verify(k)))
+      ) throw new Error('InvalidFeed')
+      c.blocks.push(block)
+      c.offset += block.blockSize
+      if (!c.keys.find(k => cmp(k, block.key))) c.keys.push(block.key)
       if (this.tail < c.offset) this.tail = c.offset
-    }
+    } while (1)
   }
 
   /**
@@ -346,19 +382,12 @@ export class Feed {
    * @returns {number} new length
    */
   truncate (height) {
-    if (!Number.isInteger(height)) throw new Error('IntegerExpected')
+    if (!Number.isInteger(height)) throw new Error('IntegerExpected') /* c8 ignore next */
     if (height < 0) height = this.length + height
-    if (height === 0) {
-      this.first.fmt = 0xff // brick
-      this.tail = 4
-      delete this._c
-      return 0
-    }
     const bs = this.blocks
-    while (height < bs.length) bs.pop().fmt = 0xff
     // ... 🍵
-    bs[--height].eoc = true
-    this._c.offset = this.tail = bs[height].end
+    while (height < bs.length) this.tail -= bs.pop()._brick()
+    this._c.offset = this.tail
     return this.length
   }
 
@@ -429,7 +458,7 @@ export class Feed {
           src = this
           try { s = dst.diff(src) } catch (e2) {
             if (['diverged', 'unrelated'].includes(e2.message)) return -1
-            else throw err // c8 ignore next
+            else throw err /* c8 ignore next */
           }
           break
         default: throw err
@@ -459,37 +488,22 @@ export class Feed {
   }
 
   * _rebase (blocks) {
-    let ofmt = this.last?.offset || -1
-    // if (this.last) this.last.eoc = false
     let size = 0
     const keys = [...this.keys]
     const klen = keys.length
-    const bk = {} // trade mem for cpu
+    const sigKeyMap = {} // trade mem for cpu
     for (const b of blocks) {
       size += b.blockSize
-      let ki = keys.findIndex(k => cmp(b.key, k))
-      if (ki === -1) { // Add missing key
-        ki = keys.length
-        keys.push(b.key)
-        size += sizeOfKeySegment
-      }
-      bk[toHex(b.sig)] = ki
+      sigKeyMap[toHex(b.sig)] = b.key
     }
     this.#grow(this.tail + size)
     const buffer = this._buf
-    for (const k of keys.slice(klen)) {
-      createKeySegment(k, buffer, this.tail)
-      this.tail += sizeOfKeySegment
-    }
     for (const b of blocks) {
       yield b
-      if (ofmt > 0) buffer[ofmt] = buffer[ofmt] & 0b11110111
       buffer.set(b.buffer, this.tail)
-      ofmt = this.tail
-      buffer[ofmt] |= 0b1000
       this.tail += b.blockSize
     }
-    this._index(false, bk)
+    this._index(false, sigKeyMap)
   }
 
   /**
@@ -498,25 +512,6 @@ export class Feed {
    * @param {(line: string) => void} log Printline function
    */
   inspect (log = console.error) { log(macrofilm(this)) }
-}
-
-/** @typedef {{ type: 0, key: PublicBin }} KeySegment */
-/** @typedef {{ type: 1, block: Block }} BlockSegment */
-/** @typedef {{ type: -1 }} InvalidSegment */
-/** @type {(buffer: Uint8Array, offset: usize) => KeySegment|BlockSegment|InvalidSegment} */
-function nextSegment (buffer, offset = 0) {
-  if (buffer.length - offset < 33) return { type: -1 } // Minimum Valid Segment
-  const fmt = buffer[offset]
-  const type = fmt === fmtKEY
-    ? 0
-    : (fmt & 0b11110001) === fmtBLK ? 1 : -1
-  switch (type) {
-    case 0: // KEY
-      return { type, key: buffer.subarray(offset + 1, offset + 33) }
-    case 1: // BLK
-      return { type, block: new Block(buffer, offset) }
-    default: return { type }
-  }
 }
 
 /** @typedef {Feed|Block|Array<Block>|Uint8Array|ArrayBuffer} Feedlike
@@ -544,10 +539,8 @@ export function macrofilm (f, w = 40, m = 32) {
   const row2 = (l, r) => row(l.padEnd(h, ' ') + '| ' + r.padStart(h, ' '))
   const lb = (c = '=', t = '', b = '|') => b + c + t.padEnd(w - 3, c) + b + '\n'
   const stp = (w - 6) >> 2
-  const refmt = b => (
-    (b.genesis ? '🌱' : '⬆️') +
-    (b.eoc ? '💀' : '⬇️')
-  )
+  const refmt = b => (b.genesis ? '🌱' : '')
+
   const hxa = b => '| ' + toHex(b).replace(/(.{2})/g, '$1 ').padEnd(stp * 3, ' ') +
     ' | ' + b2s(b).padEnd(stp, ' ') + '  |\n'
   let str = lb('-', '', '.') +
@@ -572,6 +565,7 @@ export function macrofilm (f, w = 40, m = 32) {
   return str + lb('_')
 }
 
+
 /** Encodes number as varint into buffer@offset
  * @return {number} number of bytes written */
 export function varintEncode (num, buffer = [], offset = 0) {
@@ -595,4 +589,22 @@ export function varintDecode (buffer, offset = 0) {
     if (!(b & 0x80)) return [value, i]
   }
   throw new Error('Insufficient bytes in buffer')
+}
+
+/** A.k.a inspect buffer
+  * @param {Uint8Array} bytes */
+export function hexdump (bytes, log = false, width = 16) {
+  // TODO: nice to have, save runtime type Uint8Array|ArrayBuffer|node:Buffer|Array<number>|string
+  bytes = toU8(bytes)
+  let o = 0
+  let out = `[Buffer] size: ${bytes.length}` // <-- present type here
+  while (o < bytes.length) {
+    const line = bytes.subarray(o, o + Math.min(width, bytes.length - o))
+    out += '\n' + toHex(line).replace(/(.{2})/g, '$1 ').padEnd(width * 3, ' ') +
+      '\t' + b2s(line).replace(/\n/g, '.')
+    o += width
+  }
+  if (typeof log === 'function') log(out)
+  else if (log) console.info(out)
+  else return out
 }

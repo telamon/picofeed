@@ -1,9 +1,8 @@
 import { webcrypto } from 'node:crypto'
-import { test, skip } from 'brittle'
+import { test, solo, skip } from 'brittle'
 import {
   Feed,
   signPair,
-  createKeySegment,
   createBlockSegment,
   Block,
   toHex,
@@ -12,59 +11,62 @@ import {
   fromHex,
   getPublicKey,
   varintEncode,
-  varintDecode
+  varintDecode,
+  HDR_AUTHOR,
+  HDR_PSIG,
+  hexdump
 } from './index.js'
 // shim for test.js and node processes
 if (!globalThis.crypto) globalThis.crypto = webcrypto
 
-test('POP-02 spec', async t => {
-  // const { sk, pk } = signPair()
+test('POP-02 spec, rework version 8', async t => {
   const sk = fromHex('f1d0ea8c8dc3afca9766ee6104f02b6ea427f1d24e3e4d6813b09946dff11dfa')
   const pk = getPublicKey(sk)
-  // console.log('Public', pk.length, pk)
-  // console.log('Private', sk.length, toHex(sk))
 
+  // Zero overhead pico block
   const feed = new Uint8Array(1024)
+  const message = 'Complexity is the enemy of all great visions'
   let offset = 0
-  const k0 = createKeySegment(pk, feed)
 
-  t.is(k0[0].toString(2), '10110000', 'key segment')
-  offset += k0.length
-  // console.log('K0', k0.length, toHex(k0))
+  const block1 = createBlockSegment(feed, offset, message, sk, [HDR_AUTHOR])
 
-  const b0 = createBlockSegment('hack', sk, null, feed, k0.length)
-  const bm0 = new Block(feed, offset)
-  offset += b0.length
-  t.is(bm0.fmt.toString(2), '10111001', 'solo block')
-  // console.log('B0', b0.length, toHex(b0))
+  offset += block1.length
+  t.is(offset, message.length + 64 + 1 + 34, 'Block signed, overhead: signature + length')
 
-  t.is(bm0.eoc, true)
-  bm0.eoc = false
+  const bm1 = new Block(block1, 0)
+  t.is(b2s(bm1.body), message, 'message intact')
+  t.is(bm1.verify(pk), true, 'signature checks out')
 
-  const b1 = createBlockSegment('planet', sk, bm0.sig, feed, offset)
-  const bm1 = new Block(feed, offset)
-  offset += b1.length
-  // console.log('B1', b1.length, toHex(b1))
+  const message2 = `
+    So that is why I trade off uint16 size
+    and known offsets AUTHOR / SIG in favour
+    of varint + list of headers...
+  `
+  const block2 = createBlockSegment(feed, offset, message2, sk, [
+    HDR_AUTHOR,
+    [HDR_PSIG, bm1.sig]
+  ])
+  const bm2 = new Block(block2)
+  t.is(block2.length, bm2.blockSize, 'block size matches')
+  offset += bm2.blockSize
 
-  // Final integrity assertion / validate chain
-  t.is(toHex(k0.subarray(1)), pk)
-  t.is(bm0.fmt.toString(2), '10110001', 'genesis not last')
-  t.is(bm0.genesis, true)
-  t.is(bm0.eoc, false)
-  t.is(bm0.verify(pk), true)
-  t.is(b2s(bm0.body), 'hack')
-
-  t.is(bm1.fmt.toString(2), '10111011', 'last block')
-  t.is(bm1.genesis, false)
-  t.is(bm1.eoc, true)
-  t.is(toHex(bm1.psig), toHex(bm0.sig))
-  t.is(bm1.verify(pk), true)
-  t.is(b2s(bm1.body), 'planet')
-
+  t.is(b2s(bm2.body), message2, 'message2 intact')
+  t.is(bm2.verify(pk), true, 'Block2, signature valid')
+  t.is(toHex(bm2.key), pk, 'author stored')
+  t.is(toHex(bm2.psig), toHex(bm1.sig), 'has parent signature')
+  // TODO: test + implement POP8: HDR_DATE
   const rebase = new Feed()
   rebase.merge(feed.subarray(0, offset))
-  // console.log('Feed:', toHex(rebase.buffer))
+  // rebase.inspect()
+
+  t.is(rebase.length, 2, '2 blocks imported')
+  t.is(rebase.tail, offset +4 , 'tail is correct (+ PiC0)')
+  hexdump(block2)
+  hexdump(block2, () => {})
+  hexdump(block2, 1)
+  rebase.inspect()
 })
+
 
 test('POP-0201 Feed.new(), append(), blocks(), keys(), clone()', async t => {
   const feed = new Feed()
@@ -109,24 +111,7 @@ test('POP-0201 truncate()', async t => {
   feed.truncate(0)
   t.is(feed.length, 0)
   t.is(feed.append('B5', sk), 1)
-})
-
-test('POP-02: End of Chain Regression', async t => {
-  const { sk } = Feed.signPair()
-  const f = new Feed()
-  f.append('First block', sk)
-  t.is(f._c.blocks[0].eoc, true)
-  f.append('Second block', sk)
-  t.is(f._c.blocks[0].eoc, false)
-  t.is(f._c.blocks[1].eoc, true)
-  f.append('Third block', sk)
-  t.is(f._c.blocks[1].eoc, false)
-  t.is(f._c.blocks[2].eoc, true)
-  const b = f.clone()
-  t.is(b.blocks[2].eoc, true)
-  b.append('Fourth block', sk)
-  t.is(b.blocks[2].eoc, false)
-  t.is(b.blocks[3].eoc, true)
+  t.is(feed.truncate(-1), 0)
 })
 
 test('POP-0201 inspect()', async t => {
@@ -196,11 +181,13 @@ test('POP-0201 diff()', async t => {
   e.truncate(2)
   const de = d.diff(e)
   t.is(de, -3, 'e is 3 behind')
+  t.is(d.diff(d), 0, 'short circuit self diff')
 })
 
 test('POP-0201: slice() & merge()', async t => {
   const a = new Feed()
   const { sk } = Feed.signPair()
+  a.merge(new Feed()) // Make c8/cov happy
   a.append('zero', sk)
   const b = a.clone()
   t.is(a.partial, false)
