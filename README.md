@@ -2,7 +2,7 @@
 ```
           _
  _ . _  _|__  _  _|
-|_)|(_(_)|(/_(/_(_| v5
+|_)|(_(_)|(/_(/_(_| v8
 |
 ```
 
@@ -61,7 +61,7 @@ const feed = new Feed()
 
 feed.append('Hello', secret) // => height 1
 feed.blocks[0].body // => 'Hello'
-feed.blocks[0].blockSize // => 72 bytes
+feed.blocks[0].blockSize // => 71 bytes
 
 const verifiableData = feed.buffer
 
@@ -76,6 +76,13 @@ toHex(remoteFeed.blocks[0].key) === alice.pk // true
 
 
 ## Changelog
+
+#### `8.0.0`
+
+Reworked binary format, less overhead
+
+- removed `fmt` byte
+- added Headers instead
 
 #### `5.0.1`
 - `phat`-bit replaced with `varint`
