@@ -18,27 +18,34 @@
 
 ## Intro
 
+( For those who are new to linked blocks )
+
 Imagine git as a jar, then using pliers pull out a branch.
 That single detached branch is synonymous with one picofeed
 _- a memorybuffer containing cryptographically signed blocks:_
 
+This package provides 2 primitves
+**Feed**
 ```
-|------|-----|------------------|----------------------|
-| PiC0 | Key | Block 0: "hello" | Block 1: "picoverse" |
-| 4B   | 33B |    71 Bytes      |     138 Bytes        |
-|------|-----|------------------|----------------------|
+|------|------------------|----------------------|
+| PiC0 | Block 0: "hello" | Block 1: "picoverse" |
+|------|------------------|----------------------|
 ```
+and
+
+**Block**
+```
+| SIG: 64B     |
+| SIZE: varint |
+| DATA: buffer[SIZE] |
+```
+minimal overhead, quite simple.
+
 
 This library provides a high level API to `append`, `slice` and `merge`
 such feeds - block contents is upto application.
 
-Picofeeds have so far been observed within:
-- QR-Codes (out-of-band-signaling)
-- URLs (cross-messenger / platform-as-a-public-database)
-- DNS-Records (webhosting)
-
-We target user devices,
-this module is the basic building block for the frontend-blockchain-toolkit [picostack](https://github.com/telamon/picostack)
+We target user devices, picofeed is the basic building block for the frontend-block-engine [picostack](https://github.com/telamon/picostack)
 
 [discord](https://discord.gg/8RMRUPZ9RS)
 
