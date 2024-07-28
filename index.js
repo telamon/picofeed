@@ -143,6 +143,7 @@ export function createBlockSegment (buffer, offset = 0, data, sk, headers = []) 
  */
 /** @typedef {(block: Block, stop: (after: boolean) => void) => void} InteractiveMergeCallback */
 /** @typedef {Uint8Array} SignatureBin */
+/** @typedef {Feed|Block|Array<Block>|Uint8Array|ArrayBuffer} Feedlike */
 export class Block { // BlockMapper
   [symBlock] = 8 // v8
   #blksz = 0 // block size
@@ -252,14 +253,15 @@ export class Feed {
    * allocates n bytes when from is a number.
    * or borrows provided memory as internal buffer
    * @param {usize|Uint8Array} from
+   * @param {boolean?} noVerify Skip signature verification when loading blocks (careful!)
    */
-  constructor (from = 2048) {
+  constructor (from = 2048, noVerify = false) {
     if (usize(from)) {
       this._buf = cpy(new Uint8Array(from), PIC0)
       this.tail = 4
     } else if (from instanceof Uint8Array) {
       this._buf = from
-      this._index(true)
+      this._index(true, noVerify)
     } else throw new Error('new accepts number or Uint8Array')
   }
 
@@ -349,7 +351,7 @@ export class Feed {
       const known = preverified[toHex(block.sig)]
       if (known) block.__key = known // optimization / skip verification
       else if (// use embedded HDR_AUTHOR || seek key
-        !(block.key ? block.verify() : c.keys.find(k => block.verify(k)))
+        preverified !== true && !(block.key ? block.verify() : c.keys.find(k => block.verify(k)))
       ) throw new Error('InvalidFeed')
       c.blocks.push(block)
       c.offset += block.blockSize
@@ -505,8 +507,14 @@ export class Feed {
   inspect (log = globalThis.console?.error) { log(macrofilm(this)) }
 }
 
-/** @typedef {Feed|Block|Array<Block>|Uint8Array|ArrayBuffer} Feedlike
-/** @type {(input: Feedlike, noVerify: boolean?) => Feed} */
+/**
+ * Attempts to construct a feed from `input`
+ * Loading from block-array is currently the only
+ * way to load a feed while skipping verification.
+ *
+ * @param {Feedlike} input
+ * @return {Feed}
+ */
 export function feedFrom (input, noVerify = false) {
   if (isFeed(input)) return input
   if (isBlock(input)) input = [input] // Block => array<Block>
@@ -518,7 +526,7 @@ export function feedFrom (input, noVerify = false) {
   }
   // Uint8Array Feed | Block
   if (ArrayBuffer.isView(input) || input instanceof ArrayBuffer) { // @ts-ignore
-    return new Feed(toU8(input))
+    return new Feed(toU8(input), noVerify)
   }
   throw new Error(`Cannot create feed from: ${typeof input}`)
 }
