@@ -430,10 +430,10 @@ export class Feed {
   /**
    * Merges src onto self to create a longer chain.
    * @param {Feedlike} src
-   * @param {InteractiveMergeCallback} icb Interactive Merge Callback
+   * @param {InteractiveMergeCallback?} icb Interactive Merge Callback
    * @returns {number} Number of blocks merged.
    */
-  merge (src, icb) {
+  merge (src, icb = undefined) {
     /** @type {Feed} */
     let dst = this
     src = feedFrom(src)
@@ -478,12 +478,14 @@ export class Feed {
     delete f._c // gentle nudge towards the void
   }
 
-  * _rebase (blocks) {
+  /** @returns {Generator<Block, void, unknown>} */
+  * _rebase (blocks, verify = false) {
     let size = 0
     const sigKeyMap = {} // trade mem for cpu
     for (const b of blocks) {
       size += b.blockSize
-      sigKeyMap[toHex(b.sig)] = b.key
+      // console.log("===========>>>>>  verify", verify)
+      if (!verify) sigKeyMap[toHex(b.sig)] = b.key
     }
     this.#grow(this.tail + size)
     const buffer = this._buf
@@ -504,19 +506,19 @@ export class Feed {
 }
 
 /** @typedef {Feed|Block|Array<Block>|Uint8Array|ArrayBuffer} Feedlike
-/** @type {(input: Feedlike) => Feed} */
-export function feedFrom (input) {
+/** @type {(input: Feedlike, noVerify: boolean?) => Feed} */
+export function feedFrom (input, noVerify = false) {
   if (isFeed(input)) return input
   if (isBlock(input)) input = [input] // Block => array<Block>
   // array<Block>
   if (Array.isArray(input) && isBlock(input[0])) {
     const f = new Feed() // new Fragment(blocks)  // read-only feed
-    Array.from(f._rebase(input)) // Exhaust iterator
+    Array.from(f._rebase(input, !noVerify)) // Exhaust iterator
     return f
   }
   // Uint8Array Feed | Block
   if (ArrayBuffer.isView(input) || input instanceof ArrayBuffer) { // @ts-ignore
-    return new Feed(new Uint8Array(input.buffer || input))
+    return new Feed(toU8(input))
   }
   throw new Error(`Cannot create feed from: ${typeof input}`)
 }
