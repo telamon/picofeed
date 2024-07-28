@@ -35,9 +35,9 @@ export function toU8 (o) {
   throw new Error('Uint8Array coercion failed')
 }
 /** @type {(o: *) => o is Feed} */
-export function isFeed (o) { return !!o[symFeed] }
+export function isFeed (o) { return !!(o && o[symFeed]) }
 /** @type {(o: *) => o is Block} */
-export function isBlock (o) { return !!o[symBlock] }
+export function isBlock (o) { return !!(o && o[symBlock]) }
 /** @typedef {number} usize */
 /** @type {(n: *) => n is usize} */
 export function usize (n) { return Number.isInteger(n) && n > 0 }
@@ -500,7 +500,7 @@ export class Feed {
    * of the feed. Useful for inspection.
    * @param {(line: string) => void} log Printline function
    */
-  inspect (log = console.error) { log(macrofilm(this)) }
+  inspect (log = globalThis.console?.error) { log(macrofilm(this)) }
 }
 
 /** @typedef {Feed|Block|Array<Block>|Uint8Array|ArrayBuffer} Feedlike
@@ -596,6 +596,6 @@ export function hexdump (bytes, log = false, width = 16) {
     o += width
   }
   if (typeof log === 'function') log(out)
-  else if (log) console.info(out)
+  else if (log) globalThis.console?.info(out)
   else return out
 }

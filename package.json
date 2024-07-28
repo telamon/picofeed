@@ -5,9 +5,8 @@
   "type": "module",
   "main": "index.js",
   "files": [
-    "lib",
-    "bin",
-    "index.js"
+    "index.js",
+    "index.d.ts"
   ],
   "scripts": {
     "test": "node test.js",
@@ -15,9 +14,10 @@
     "cov": "c8 --check-coverage --lines=100 node test.js",
     "size": "esbuild --bundle --minify --format=esm index.js --outfile=/dev/null --analyze",
     "lint": "standard",
-    "types": "tsc --allowJs --checkJs --declaration --emitDeclarationOnly --lib es2022,dom --target es2022 --moduleResolution nodenext  --module nodenext index.js",
+    "types": "tsc  --emitDeclarationOnly --allowJs --skipLibCheck --checkJs --declaration --removeComments --lib es2022 --target es2022 --moduleResolution nodenext --module nodenext --outFile index index.js",
     "prepublishOnly": "standard --fix && npm run cov && npm run types"
   },
+  "types": "index.d.ts",
   "dependencies": {
     "@noble/curves": "^1.4.2",
     "@noble/hashes": "^1.4.0"
