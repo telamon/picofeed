@@ -217,6 +217,7 @@ export class Block { // BlockMapper
 
   get key () { return this.#key }
   verify (pk = this.#key) {
+    if (Feed.__vctr !== -1) ++Feed.__vctr // profile global number of verifications
     const message = this.buffer.subarray(64, this.#blksz)
     const v = ed25519.verify(this.sig, message, pk)
     if (v) this.#key ||= pk
@@ -241,6 +242,7 @@ export class Block { // BlockMapper
 
 export class Feed {
   [symFeed] = 8 // version 8
+  static __vctr = -1
   static signPair = signPair
   static isFeed = isFeed
   static isBlock = isBlock
@@ -271,7 +273,7 @@ export class Feed {
     while (size < min) size = size << 1
     const arr = new Uint8Array(size)
     this._buf = cpy(arr, this._buf)
-    delete this._c // invalidate all subarrays.
+    this._index(true, true) // invalidate all subarrays.
     return true
   }
 
@@ -331,7 +333,9 @@ export class Feed {
     return blocks[n < 0 ? blocks.length + n : n]
   }
 
-  _index (reindex = false, preverified = {}) {
+  _index (reindex = false, preverified) {
+    const skipVerification = preverified === true
+    const anonKeyMap = preverified || {} // Currently unused feature but want to support (HDR_AUTHOR is optional)
     if (!this._c || reindex) this._c = { keys: [], blocks: [], offset: 0 }
     const c = this._c // cache
     // Skip magic
@@ -348,11 +352,15 @@ export class Feed {
       const block = new Block(this._buf, c.offset)
       const p = c.blocks[c.blocks.length - 1]
       if (p && !cmp(p.sig, block.psig)) throw new Error('InvalidParent')
-      const known = preverified[toHex(block.sig)]
-      if (known) block.__key = known // optimization / skip verification
-      else if (// use embedded HDR_AUTHOR || seek key
-        preverified !== true && !(block.key ? block.verify() : c.keys.find(k => block.verify(k)))
-      ) throw new Error('InvalidFeed')
+      const known = anonKeyMap[toHex(block.sig)]
+      if (known) block.__key = known // De-anonymize anonymous blocks using provided key
+      if (!skipVerification) {
+        // use embedded HDR_AUTHOR || seek key
+        const valid = block.key
+          ? block.verify()
+          : c.keys.find(k => block.verify(k))
+        if (!valid) throw new Error('InvalidFeed.SignatureVerificationFailed')
+      }
       c.blocks.push(block)
       c.offset += block.blockSize
       if (!c.keys.find(k => cmp(k, block.key))) c.keys.push(block.key)
@@ -366,7 +374,7 @@ export class Feed {
   clone () {
     // slice() copies memory, subarray() dosen't;
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/slice
-    return new Feed(this._buf.slice(0, this.tail))
+    return new Feed(this._buf.slice(0, this.tail), true)
   }
 
   /**
@@ -480,15 +488,12 @@ export class Feed {
     delete f._c // gentle nudge towards the void
   }
 
-  /** @returns {Generator<Block, void, unknown>} */
-  * _rebase (blocks, verify = false) {
+  /**
+   * Internal method, does not verify blocks by default.
+   * @returns {Generator<Block, void, unknown>} */
+  * _rebase (blocks, noVerify = true) {
     let size = 0
-    const sigKeyMap = {} // trade mem for cpu
-    for (const b of blocks) {
-      size += b.blockSize
-      // console.log("===========>>>>>  verify", verify)
-      if (!verify) sigKeyMap[toHex(b.sig)] = b.key
-    }
+    for (const b of blocks) size += b.blockSize
     this.#grow(this.tail + size)
     const buffer = this._buf
     for (const b of blocks) {
@@ -496,7 +501,7 @@ export class Feed {
       buffer.set(b.buffer, this.tail)
       this.tail += b.blockSize
     }
-    this._index(false, sigKeyMap)
+    this._index(false, noVerify)
   }
 
   /**
@@ -509,10 +514,14 @@ export class Feed {
 
 /**
  * Attempts to construct a feed from `input`
- * Loading from block-array is currently the only
- * way to load a feed while skipping verification.
+ *
+ * Verification behaviour when input is:
+ * - Feed: **not verified**, run `feed.blocks.map(b => b.verify())` manually
+ * - Block|BlockArray: uses parameter `noVerify`
+ * - u8|Buffer: uses parameter `noVerify`
  *
  * @param {Feedlike} input
+ * @param {boolean} [noVerify] Skip signature checking for input (can produce 'untrusted' feeds)
  * @return {Feed}
  */
 export function feedFrom (input, noVerify = false) {
@@ -521,7 +530,7 @@ export function feedFrom (input, noVerify = false) {
   // array<Block>
   if (Array.isArray(input) && isBlock(input[0])) {
     const f = new Feed() // new Fragment(blocks)  // read-only feed
-    Array.from(f._rebase(input, !noVerify)) // Exhaust iterator
+    Array.from(f._rebase(input, noVerify)) // Exhaust iterator
     return f
   }
   // Uint8Array Feed | Block

@@ -1,5 +1,5 @@
 import { webcrypto } from 'node:crypto'
-import { test, skip } from 'brittle'
+import { test, skip, solo } from 'brittle'
 import {
   Feed,
   signPair,
@@ -18,6 +18,8 @@ import {
 } from './index.js'
 // shim for test.js and node processes
 if (!globalThis.crypto) globalThis.crypto = webcrypto
+
+Feed.__vctr = 0 // Enable verification counts
 
 test('POP-02 spec, rework version 8', async t => {
   const sk = fromHex('f1d0ea8c8dc3afca9766ee6104f02b6ea427f1d24e3e4d6813b09946dff11dfa')
@@ -344,4 +346,44 @@ test('reverse diverged merge', async t => {
   b.append('Mars', sk)
   t.is(a.merge(b.slice(-1)), -1, 'diverged')
   t.is(b.slice(-1).merge(a), -1, 'reverse diverged')
+})
+
+test('about: verifications', async t => {
+  let n = Feed.__vctr
+  const nDiffReset = () => { const r = Feed.__vctr - n; n = Feed.__vctr; return r }
+
+  const { sk } = Feed.signPair()
+  const a = new Feed()
+  a.append("Verify this once", sk)
+  t.is(nDiffReset(), 1, 'Append Verfies')
+  a.append('another block', sk)
+  t.is(nDiffReset(), 1, 'Only newly appended blocks is verified')
+
+  const b = a.clone()
+  t.is(nDiffReset(), 0, 'Clone does not verifiy')
+
+  b.append('third block', sk)
+  b.append('fourth block', sk)
+  t.is(nDiffReset(), 2, '+2 for 2 blocks')
+
+  b.diff(a)
+  t.is(nDiffReset(), 0, 'diff() does not verify')
+  a.diff(b)
+  t.is(nDiffReset(), 0, 'reverse-diff() does not verify')
+
+  a.merge(b)
+  t.is(nDiffReset(), 0, 'merge does not reverify')
+
+  Feed.from(a.buffer)
+  t.is(nDiffReset(), a.length, 'Loading from u8 verifies')
+
+  Feed.from(a.buffer, true)
+  t.is(nDiffReset(), 0, 'Loading from trusted u8 does not')
+
+  Feed.from(a.blocks)
+  t.is(nDiffReset(), a.length, 'Loading block-array verifies')
+
+  Feed.from(a.blocks, true)
+  t.is(nDiffReset(), 0, 'Loading trusted block-array does not')
+  console.log('Test-suite ran verify() n-times', Feed.__vctr)
 })
