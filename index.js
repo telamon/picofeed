@@ -70,6 +70,7 @@ export function getPublicKey (secret) {
   return toHex(ed25519.getPublicKey(secret))
 }
 
+/* Deprecate ? */
 export const PIC0 = s2b('PIC0')
 // <16 RESERVED KNOWN SIZE HEADERS
 export const HDR_AUTHOR = 1
@@ -254,6 +255,7 @@ export class Feed {
    * Creates a new feed
    * allocates n bytes when from is a number.
    * or borrows provided memory as internal buffer
+   * @constructor
    * @param {usize|Uint8Array} from
    * @param {boolean?} noVerify Skip signature verification when loading blocks (careful!)
    */
@@ -338,8 +340,9 @@ export class Feed {
     const anonKeyMap = preverified || {} // Currently unused feature but want to support (HDR_AUTHOR is optional)
     if (!this._c || reindex) this._c = { keys: [], blocks: [], offset: 0 }
     const c = this._c // cache
-    // Skip magic
+    // Skip magic @deprecate?
     if (!c.offset && cmp(this._buf.subarray(0, 4), PIC0)) c.offset = 4
+    if (this.tail < c.offset) this.tail = c.offset
 
     do {
       // Detect end of feed
