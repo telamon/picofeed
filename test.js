@@ -1,5 +1,5 @@
 import { webcrypto } from 'node:crypto'
-import { test, skip, solo } from 'brittle'
+import { test, skip } from 'brittle'
 import {
   Feed,
   signPair,
@@ -354,7 +354,7 @@ test('about: verifications', async t => {
 
   const { sk } = Feed.signPair()
   const a = new Feed()
-  a.append("Verify this once", sk)
+  a.append('first block', sk)
   t.is(nDiffReset(), 1, 'Append Verfies')
   a.append('another block', sk)
   t.is(nDiffReset(), 1, 'Only newly appended blocks is verified')
