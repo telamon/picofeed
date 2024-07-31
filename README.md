@@ -24,7 +24,8 @@ Imagine git as a jar, then using pliers pull out a branch.
 That single detached branch is synonymous with one picofeed
 _- a memorybuffer containing cryptographically signed blocks:_
 
-This package provides 2 primitves
+This package provides 2 primitves  
+
 **Feed**
 ```
 |------|------------------|----------------------|
