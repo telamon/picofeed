@@ -22,56 +22,65 @@ void pico_public_from_secret(uint8_t key[32], const uint8_t secret[32]) {
   crypto_eddsa_scalarbase(key, secret);
 }
 */
+
 // void pico_hash(uint8_t hash[32], const uint8_t *message, int m_len);
-void pico_crypto_keypair(pico_keypair_t *pair) {
+void
+pico_crypto_keypair(pf_keypair_t *pair) {
   uint8_t seed[32] = {0};
   pico_crypto_random(seed, 32);
   uint8_t _[32] = {0};
   crypto_eddsa_key_pair(pair->secret, _, seed);
 }
-void pico_crypto_sign(pico_signature_t signature, const uint8_t *message, const size_t m_len, const pico_keypair_t pair) {
+
+void
+pico_crypto_sign(pf_signature_t signature, const uint8_t *message, const size_t m_len, const pf_keypair_t pair) {
   crypto_eddsa_sign(signature, pair.secret, message, m_len);
 }
-int pico_crypto_verify(const pico_signature_t signature, const uint8_t *message, const size_t m_len, const uint8_t pk[32]) {
+
+int
+pico_crypto_verify(const pf_signature_t signature, const uint8_t *message, const size_t m_len, const pf_key_t pk) {
   return crypto_eddsa_check(signature, pk, message, m_len);
 };
 #endif
 
-static int varint_sizeof(int num) {
+static inline size_t
+varint_sizeof(size_t num) {
   int i = 0;
   while (num >= 0x80) { num >>= 7; ++i; }
   return i + 1;
 }
 
 /** Encodes number as varint into buffer@offset
- * @return {number} number of bytes written */
-static int varint_encode (int num, uint8_t *buffer) {
+ * @return {size_t} number of bytes written */
+static inline int
+varint_encode (uint8_t *dst, size_t num) {
   int i = 0;
   while (num >= 0x80) {
-    buffer[i++] = (num & 0x7F) | 0x80;
+    dst[i++] = (num & 0x7F) | 0x80;
     num >>= 7;
   }
-  buffer[i++] = num;
+  dst[i++] = num;
   return i;
 }
 
 /**
  * @brief reads varint
  * does not length check.
- * @return {int} bytes read
+ * @return {size_t} bytes read
  */
-static size_t varint_decode (const uint8_t *buffer, int *value) {
-  int tmp = 0;
+static int
+varint_decode (const uint8_t *buffer, size_t *value) {
+  size_t tmp = 0;
   if (value == NULL) value = &tmp; // Discard value, return size only
   *value = 0;
   int i = 0;
   int offset = 0;
-  while (1) {
+  while (i < sizeof(size_t)) {
     uint8_t b = buffer[offset++];
     *value |= (b & 0x7F) << (i++ * 7);
     if (!(b & 0x80)) return i;
   }
-  // TODO: return -1; /// Insufficient bytes in buffer
+  assert(0);
 }
 
 /* ---------------- POP-08 Time ----------------*/
@@ -95,98 +104,184 @@ uint64_t pf_read_utc(const uint8_t src[5]) {
 }
 
 /* ---------------- POP-02 Format ----------------*/
-size_t pf_estimated_block_size(const size_t data_length, const pf_block_type_t type) {
-  switch (type & 0b1111) {
-    case CANONICAL: return data_length + sizeof(struct pf_block_canon); // 200;
-    case GENESIS: return data_length + varint_sizeof(data_length);
-    case FOLLOW: return data_length + PICO_SIG_SIZE + varint_sizeof(data_length);
-    default: return 0;
+static inline int
+is_empty(const uint8_t *buffer, size_t len) {
+  int i = 0;
+  while (i < len && buffer[i++] == 0);
+  return i == len;
+}
+
+inline static int
+trail0 (const uint8_t *bytes, size_t len) {
+  __builtin_trap(); // TODO: test alignment
+#ifdef ENABLE_OPTIMIZATIONS
+#define T uint64_t
+#define N sizeof(T)
+  while (len % N && bytes[len - 1] == 0) len--;
+  while (len >= N && *(T *) bytes + len - N == 0) len -= N;
+#undef N
+#else
+  while (len && bytes[--len] == 0);
+  return len + 1;
+#endif
+}
+
+typedef enum {
+  EFAILED = -1,
+  EUNKHDR = -2,
+  EDUPHDR = -3,
+  EVERFAIL = -4
+} pf_decode_error_t;
+
+int
+pf_decode_block(const uint8_t *bytes, pf_block_t *block, int no_verify) {
+  zro(block, sizeof(pf_block_t));
+  cpy(block->id, bytes, sizeof(pf_signature_t));
+
+  size_t o = sizeof(pf_signature_t);
+
+  uint8_t headers_set[0xff] = {0};
+
+  while (bytes[o] == 0) {
+    uint8_t type = bytes[++o];
+    o++;
+
+    switch (type) {
+      case PICO_HDR_AUTHOR:
+        if (headers_set[PICO_HDR_AUTHOR]++) return -EDUPHDR;
+        cpy(block->author, &bytes[o], sizeof(pf_key_t));
+        o += sizeof(pf_key_t);
+        break;
+
+      case PICO_HDR_PSIG:
+        if (headers_set[PICO_HDR_PSIG]++) return -EDUPHDR; // TODO: support multiple parents
+        cpy(block->psig, &bytes[o], sizeof(pf_signature_t));
+        o += sizeof(pf_signature_t);
+        break;
+
+      case PICO_HDR_SEQ:
+        if (headers_set[PICO_HDR_SEQ]++) return -EDUPHDR;
+        block->seq = *(uint16_t *) &bytes[o];
+        o += sizeof(uint16_t);
+        break;
+      /*
+      case PICO_HDR_LOCATION:
+        if (block->location != 0) return -EDUPHDR;
+        block->location = *(uint64_t *) &bytes[bo];
+        bo += sizeof(uint64_t);
+        break;
+      */
+      case PICO_HDR_DATE:
+        if (headers_set[PICO_HDR_DATE]++) return -EDUPHDR;
+        block->date = *(uint64_t *) &bytes[o];
+        o += sizeof(uint64_t);
+        break;
+
+      default:
+        return EUNKHDR; // unknown header;
+    }
   }
-}
 
-pf_block_type_t pf_typeof(const pf_block_t *block) {
-  if ((block->bar.magic & 0b11110000) != PICO_MAGIC) return INVALID_BLOCK;
-  pf_block_type_t type = block->bar.magic & 0b1111;
-  switch (type) {
-    case CANONICAL:
-    case GENESIS:
-    case FOLLOW:
-      return type;
-    default:
-      return INVALID_BLOCK;
+  o += varint_decode(&bytes[o], &block->len);
+  block->body = &bytes[o];
+  o += block->len;
+
+  if (!no_verify) { // TODO: remove pf_verify(); this is the only place we'll verify
+    if (!headers_set[PICO_HDR_AUTHOR]) return EVERFAIL;
+    int err = pico_crypto_verify(block->id, bytes + sizeof(pf_signature_t), o - sizeof(pf_signature_t), block->author);
+    if (err != 0) return EVERFAIL;
   }
+
+  return o;
 }
 
-size_t pf_sizeof(const pf_block_t *block) {
-  pf_block_type_t type = pf_typeof(block);
-  assert(type != INVALID_BLOCK);
-  if (type == CANONICAL) return pf_estimated_block_size(block->net.length, type);
-  int d_len = 0;
-  if (type == GENESIS) varint_decode(block->bar.genesis.length, &d_len);
-  else varint_decode(block->bar.child.length, &d_len);
-  return pf_estimated_block_size(d_len, type);
+ssize_t
+pf_sizeof (const pf_block_t *block) {
+  if (block->len < 1 || block->body == NULL) return -1;
+#define OVERHEAD 2
+  size_t len = sizeof(pf_signature_t);
+  if (!is_empty(block->psig, sizeof(pf_signature_t))) len += sizeof(block->psig) + OVERHEAD;
+  if (block->author[0]) len += sizeof(block->author) + OVERHEAD;
+  if (block->seq) len += sizeof(block->seq) + OVERHEAD;
+  if (block->date) len += sizeof(block->date) + OVERHEAD;
+  if (block->compression) len += sizeof(block->compression) + OVERHEAD;
+  len += varint_sizeof(block->len);
+#undef OVERHEAD
+  return len + block->len;
 }
 
-size_t pf_block_body_size(const pf_block_t *block) {
-  pf_block_type_t type = pf_typeof(block);
-  assert(type != INVALID_BLOCK);
-  if (type == CANONICAL) return block->net.length;
-  int bsize = 0;
-  if (type == GENESIS) varint_decode(block->bar.genesis.length, &bsize);
-  else varint_decode(block->bar.child.length, &bsize);
-  return bsize;
-}
-/// The compact style is starting to feel like a footgun.
-const uint8_t *pf_block_body(const pf_block_t *block) {
-  pf_block_type_t type = pf_typeof(block);
-  assert(type != INVALID_BLOCK);
-  if (type == CANONICAL) return block->net.body;
-  const uint8_t *body_start = type == GENESIS
-    ? block->bar.genesis.length
-    : block->bar.child.length;
-  size_t vlen = varint_decode(body_start, NULL);
-  return body_start + vlen;
-}
 
-/**
- * @brief creates a block segment
- * @param buffer expected length > pico_block_size(d_len, fmt_flags);
- * @param data application data
- * @param d_len size of application data
- * @param pair secret key
- * @param psig (optional) parent block id
- * @return int number of bytes written or <1 on error
- */
-int pf_create_block(
-    uint8_t *buffer,
-    const uint8_t *data,
-    size_t d_len,
-    const pico_keypair_t pair,
-    const pico_signature_t *psig
-) {
-  zro(buffer, sizeof(pf_block_t));
-  pf_block_t *block = (pf_block_t*) buffer;
-  block->net.magic = PICO_MAGIC | CANONICAL;
-  if (psig != NULL) cpy(block->net.psig, (uint8_t*)psig, PICO_SIG_SIZE);
-  cpy(block->net.author, pair.pk, PICO_KEY_SIZE);
-  pf_write_date(block->net.date);
-  memset(&block->net.dst, 0xff, 32);
-  block->net.length = d_len;
-  // if (buffer.length - offset < bsize) return -1 // buffer-underflow
-  cpy(block->net.body, data, d_len); // TODO: if body != data
-  size_t b_size = pf_estimated_block_size(block->net.length, block->net.magic);
-  const uint8_t *message = buffer + PICO_SIG_SIZE;
-  pico_crypto_sign(block->net.id, message, b_size - PICO_SIG_SIZE, pair);
+ssize_t
+pf_create_block(uint8_t *dst, pf_block_t *block, const pf_keypair_t pair) {
+  ssize_t b_size = pf_sizeof(block);
+  assert(b_size > 0);
+
+  int body_offset = b_size - block->len;
+  memmove(dst + body_offset, block->body, block->len);
+  zro(dst, body_offset); // should be redundant
+
+  size_t o = sizeof(block->id);
+
+  if (!is_empty(block->psig, sizeof(block->psig))) {
+    dst[o++] = 0;
+    dst[o++] = PICO_HDR_PSIG;
+    cpy(dst + o, block->psig, sizeof(block->psig));
+    o += sizeof(block->psig);
+  }
+
+  if (block->author[0]) {
+    dst[o++] = 0;
+    dst[o++] = PICO_HDR_AUTHOR;
+    cpy(dst + o, pair.pk, sizeof(pair.pk));
+    o += sizeof(block->author);
+  }
+
+  if (block->seq) {
+    dst[o++] = 0;
+    dst[o++] = PICO_HDR_SEQ;
+    *((uint16_t *)dst + o) = block->seq;
+    o += sizeof(block->seq);
+  }
+
+  if (block->compression) {
+    dst[o++] = 0;
+    dst[o++] = PICO_HDR_COMPRESSION;
+    dst[o++] = block->compression;
+  }
+
+  if (block->date) {
+    dst[o++] = 0;
+    dst[o++] = PICO_HDR_DATE;
+    pf_write_date(dst + o);
+    // *((uint64_t *)dst + o) = block->date; // TODO: pf_getdate()
+    o += sizeof(block->date);
+  }
+
+  o += varint_encode(dst + o, block->len);
+
+  assert(o == body_offset);
+  pico_crypto_sign(dst, dst + sizeof(pf_signature_t), b_size - sizeof(pf_signature_t), pair);
+
+  int n = pf_decode_block(dst, block, 0); // reload fields
+  assert(n == b_size);
+
   return b_size;
 }
 
-int pf_verify_block(const pf_block_t *block, const uint8_t public_key[32]) {
-  const uint8_t *message = ((void*)block) + PICO_SIG_SIZE;
-  return pico_crypto_verify(block->net.id, message, pf_estimated_block_size(block->net.length, block->net.magic) - PICO_SIG_SIZE, block->net.author);
-}
+// TODO: input must be raw bytes; block_t exists only post-verify
+/*
+int pf_verify_block(const pf_block_t *block) {
+  assert(is_empty(block->author, sizeof(block->author)));
+
+  int len = pf_sizeof(block);
+  assert(len > 0);
+
+  const uint8_t *message = block->body;
+  return pico_crypto_verify(block->id, block->body, len - sizeof(pf_signature_t), block->author);
+}*/
 
 /* ---------------- POP-0201 Feed ----------------*/
-
+/*
 #define MINIMUM_ALLOCAITION_UNIT 1024
 #define MAXIMUM_FEED_SIZE 65535
 int pf_init(pico_feed_t *feed) {
@@ -219,16 +314,33 @@ static int grow(pico_feed_t *feed, size_t min_cap) {
   return 0;
 };
 
-int pf_append(pico_feed_t *feed, const uint8_t *data, const size_t d_len, const pico_keypair_t pair) {
+int pf_append(pico_feed_t *feed, const uint8_t *data, const size_t d_len, const pf_keypair_t pair) {
   pf_block_t *last = pf_last(feed);
-  const size_t b_size = pf_estimated_block_size(d_len, CANONICAL);
+
+  // defaults
+  pf_block_t block = {
+    .compression = 0,
+    .date = 1,
+    .author = {1},
+    .len = d_len,
+    .body = data
+  };
+
+  if (last != NULL) {
+    cpy(block.psig, last->id, sizeof(block.psig));
+    block.seq = last->seq + 1;
+  }
+
+  const size_t b_size = pf_sizeof(&block);
+
   if (b_size > feed->capacity - feed->tail) {
     int err = grow(feed, feed->tail + b_size);
     if (err) return err;
   }
-  pico_signature_t *psig = last != NULL ? &last->bar.id : NULL;
-  int err = pf_create_block(&feed->buffer[feed->tail], data, d_len, pair, psig);
+
+  int err = pf_create_block(&feed->buffer[feed->tail], &block, pair);
   if (err != b_size) return err;
+
   feed->tail += b_size;
   return feed->tail;
 }
@@ -304,7 +416,7 @@ void pf_clone(pico_feed_t *dst, const pico_feed_t *src) {
   dst->tail = src->tail;
   dst->buffer = malloc(dst->tail);
   dst->capacity = dst->tail;
-  memcpy(dst->buffer, src->buffer, dst->tail);
+  cpy(dst->buffer, src->buffer, dst->tail);
 }
 
 int pf_slice(
@@ -333,8 +445,8 @@ int pf_slice(
   if (dst->buffer != NULL) pf_truncate(dst, 0);
   else assert(0 == pf_init(dst));
   if (dst->capacity < len) grow(dst, len);
-  memcpy(dst->buffer, src->buffer + off, len);
+  cpy(dst->buffer, src->buffer + off, len);
   dst->tail = len;
   return i - start_idx; // TODO: return len maybe?
 }
-
+*/

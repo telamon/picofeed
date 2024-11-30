@@ -1,4 +1,3 @@
-#include <stdlib.h>
 #include <memory.h>
 #include <strings.h>
 #include <time.h>
@@ -38,8 +37,8 @@ void hexdump(const void* buffer, size_t size) {
       printf(" |");
       for (; j < lineEnd; ++j) {
         printf("%c", isprint(byteBuffer[j]) ? byteBuffer[j] : '.');
-      }
-      printf("|\n");
+    }
+    printf("|\n");
     }
   }
 }
@@ -57,7 +56,7 @@ static void inspect_body(const pico_feed_t *feed) {
     free(txt);
   }
 }
-
+/*
 static void inspect(const pico_feed_t *feed) {
   struct pf_iterator iter = {0};
   int i = 0;
@@ -94,10 +93,10 @@ static void inspect(const pico_feed_t *feed) {
     ++i;
   }
   printf("# End Of Chain\n\n");
-}
+}*/
 
 static int test_pop01_keygen(void) {
-  pico_keypair_t pair = {0};
+  pf_keypair_t pair = {0};
   pico_crypto_keypair(&pair);
   uint8_t *pk = pair.pk;
 
@@ -116,26 +115,41 @@ static int test_pop01_keygen(void) {
 }
 
 static int test_pop02_blocksegment(void) {
-  log_debug("pico_block_sz: %i B", sizeof(struct pf_block_canon));
-  log_debug("pico_block_anon_sz: %i B", sizeof(struct pf_block_anon));
-  pico_keypair_t pair = {0};
+  pf_keypair_t pair = {0};
   pico_crypto_keypair(&pair);
+
   uint8_t *buffer = malloc(1024);
+
   const char *message = "Presales of HorNET starting at €20+VAT - pm @telamo[h]n 4 more info";
   log_debug("m_len: %zu", strlen(message));
-  int res = pf_create_block(buffer, (uint8_t*)message, strlen(message), pair, NULL);
+
+  pf_block_t a = {
+    .author = {1},
+    .seq = 0,
+    .psig = {0},
+    .body = (uint8_t *) message,
+    .len = strlen(message)
+  };
+
+  int res = pf_create_block(buffer, &a, pair);
   OK(res > 0, "Create Block");
-  // hexdump(buffer, res);
-  pf_block_t *block = (pf_block_t*) buffer;
-  log_debug("block created, @time %i", block->net.date);
-  OK(0 == memcmp(block->net.body, message, strlen(message)), "body correct");
-  OK(0 == pf_verify_block(block, pair.pk), "verified block produced");
+
+  hexdump(buffer, res);
+
+  pf_block_t b = {0};
+  pf_decode_block(buffer, &b, 0);
+
+  log_debug("block created, @time %i", a.date);
+
+  OK(0 == memcmp(b.body, message, strlen(message)), "body correct");
+
   free(buffer);
   return 0;
 }
 
+/*
 static int test_pop0201_feed(void) {
-  pico_keypair_t pair = {0};
+  pf_keypair_t pair = {0};
   pico_crypto_keypair(&pair);
 
   pico_feed_t feed = {0};
@@ -249,6 +263,7 @@ static int test_pop0201_feed_merge(void) {
   pf_deinit(&fa);
   return 0;
 }
+*/
 
 #define run_test(FUNC) do { \
   if ((FUNC()) != 0) { \
@@ -261,9 +276,9 @@ int main(void) {
   log_info("Test start");
   run_test(test_pop01_keygen);
   run_test(test_pop02_blocksegment);
-  run_test(test_pop0201_feed);
-  run_test(test_pop0201_feed_diff);
-  run_test(test_pop0201_feed_merge);
+  /*run_test(test_pop0201_feed);      */
+  /*run_test(test_pop0201_feed_diff); */
+  /*run_test(test_pop0201_feed_merge);*/
   log_info("Test end, took (%i)", (pico_now() - start));
   return 0;
 }

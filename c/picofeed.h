@@ -2,6 +2,10 @@
 #define PICOFEED_H
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
+// -- remove
+#include <memory.h>
+#include <string.h>
 
 #define PiC0 "PiC0"
 #define NWSN "Network Without Super Node"
@@ -13,15 +17,17 @@
 #define PICO_KEY_SIZE 32
 #define PICO_SIG_SIZE 64
 
+typedef uint8_t pf_key_t[32];
+typedef uint8_t pf_signature_t[64];
+
 typedef union {
-  uint8_t secret [64];
+  uint8_t secret[64];
   struct {
     uint8_t seed[32];
-    uint8_t pk[32];
+    pf_key_t pk;
   };
-} pico_keypair_t;
+} pf_keypair_t;
 
-typedef uint8_t pico_signature_t[64];
 
 /* required crypto-primitives,
  * #define PICO_EXTERN_CRYPTO
@@ -29,78 +35,74 @@ typedef uint8_t pico_signature_t[64];
  */
 // #define PICO_EXTERN_CRYPTO
 void pico_crypto_random(uint8_t *buffer, size_t size);
-void pico_crypto_keypair(pico_keypair_t *pair);
+void pico_crypto_keypair(pf_keypair_t *pair);
 
 // void pico_hash(uint8_t hash[32], const uint8_t *message, int m_len); // Blake2b is fine for embedded systems
-void pico_crypto_sign(pico_signature_t signature, const uint8_t *message, const size_t m_len, const pico_keypair_t pair);
-int pico_crypto_verify(const pico_signature_t signature, const uint8_t *message, const size_t m_len, const uint8_t pk[32]);
+void pico_crypto_sign(pf_signature_t signature, const uint8_t *message, const size_t m_len, const pf_keypair_t pair);
+int pico_crypto_verify(const pf_signature_t signature, const uint8_t *message, const size_t m_len, const uint8_t pk[32]);
 /* end of crypto */
 
 /*---------------- POP-02: BLOCK FORMAT ----------------*/
 #define PICO_MAGIC 0b10100000
 
-typedef enum {
-  INVALID_BLOCK = -1,
-  CANONICAL = 0,
-  // COMPACT = 1
-  GENESIS,
-  // RESERVED = 2
-  FOLLOW = 3
-} pf_block_type_t;
+#define PICO_BLOCK_SIZE 1024
 
-/* TODO: update specs */
+#define PICO_HDR_AUTHOR       0x01 // uint8[32]
+#define PICO_HDR_PSIG         0x02 // uint8[64]
+#define PICO_HDR_SEQ          0x03 // uint16 (a.k.a block-height)
+#define PICO_HDR_DATE         0x04 // uint8[5]
+#define PICO_HDR_COMPRESSION  0x05 // uint8
+#define PICO_HDR_LOCATION     0x06 // uint64
+#define PICO_HDR_VER          0x08 // uint8[3] M.m.p - uint[8] appname
 
-// The canonical form
-struct _pack pf_block_canon {
-  uint8_t id[64];         // block signature
-  uint8_t magic;          // PiC0
-  uint8_t author[32];     // author public key
-  uint8_t psig[64];       // parent signature
-  uint8_t dst[32];        // TBD
-  uint8_t date[5];        // POP-08: 40bits, 1/100s, 0 = UTC 2020-01-01 00:00:00
-  uint16_t length;        // max block size 64K
-  uint8_t body[0];        // start offset of data
-};
+// 0x127 > Userland headers
 
-// The free and space efficient form
-// NOT IMPLEMENTED YET
-struct _pack pf_block_anon {
-  uint8_t id[64];               // the signature of block
-  uint8_t magic;                // PiC0
-  union {
-    struct {
-      uint8_t psig[64];         // psig
-      uint8_t length[0];        // varchar
-    } child;
-    struct {
-      uint8_t length[0];        // varchar
-    } genesis;
-  };
-};
+/* [x] TODO: update specs */
+/* [ ] TODO: REDO */
 
-typedef union _pack {
-  struct pf_block_canon net;
-  struct pf_block_anon bar;
+// typedef uint64_t pf_vec2;
+// typedef uint64_t pf_vec3;
+
+typedef struct pf_block_s {
+  pf_signature_t id;
+  pf_signature_t psig;
+  pf_key_t author;
+  uint16_t seq;
+  uint64_t date;
+  // pf_vec2 location2;
+  // pf_vec3 location3;
+  uint8_t compression;
+  size_t len;
+  const uint8_t *body;
 } pf_block_t;
 
-int pf_create_block(uint8_t *buffer, const uint8_t *message, size_t m_len, const pico_keypair_t pair, const pico_signature_t *parent);
-int pf_verify_block(const pf_block_t *block, const uint8_t public_key[32]);
+int
+pf_decode_block(const uint8_t *bytes, pf_block_t *block, int no_verify);
 
 /**
- * @brief get block format
+ * @brief creates a block segment
+ * @param dst expected length > pf_block_len(block);
+ * @param block headers and block metadata
+ * @param pair secret key
+ * @return int number of bytes written or <1 on error
  */
-pf_block_type_t pf_typeof(const pf_block_t *block);
+ssize_t
+pf_create_block(uint8_t *dst, pf_block_t *block, const pf_keypair_t pair);
+
+int
+pf_verify_block(const pf_block_t *block);
 
 /**
  * @brief low level size estimator
  * use pf_sizeof(block) where applicable.
  */
-size_t pf_estimated_block_size(const size_t data_length, const pf_block_type_t type);
+// size_t pf_estimated_block_size(const size_t data_length, const pf_block_type_t type);
+
 /**
  * @brief Size of entire block
  * @return size of block header + body
  */
-size_t pf_sizeof(const pf_block_t *block);
+ssize_t pf_sizeof(const pf_block_t *block);
 /**
  * @brief Size of block-body
  * @return size of block body / application data.
@@ -149,11 +151,11 @@ void pf_deinit(pico_feed_t *feed);
  * @param pair author's secret
  * @return 0 on successful new element, 1 on EOF, -1 on error
  */
-int pf_append(pico_feed_t *feed, const uint8_t *data, const size_t d_len, const pico_keypair_t pair);
+int pf_append(pico_feed_t *feed, const uint8_t *data, const size_t d_len, const pf_keypair_t pair);
 
 struct pf_iterator {
   uint16_t idx;
-  pf_block_type_t type;
+  // pf_block_type_t type;
   size_t offset;
   pf_block_t *block;
 };
@@ -223,9 +225,11 @@ void pf_clone(pico_feed_t *dst, const pico_feed_t *src);
 int pf_slice(pico_feed_t *dst, const pico_feed_t *src, int start_idx, int end_idx);
 
 /* ---------------- POP-08 Time ----------------*/
-/* V7 - Experimental */
+/* V7 - Experimental */ // this is a painfully bad idea
 #define BEGINNING_OF_TIME 1577836800
 #define UINT40_MASK 0xFFFFFFFFFFLLU
+
+// typedef struct pf_date_s pf_date_t;
 /**
  * @brief Truncated UTC timestamp
  *

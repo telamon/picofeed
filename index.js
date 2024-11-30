@@ -157,6 +157,7 @@ export class Block { // BlockMapper
   constructor (buffer, offset = 0) {
     au8(buffer)
     // Scan block contents
+    // TODO: move length decode varint after headers
     const [dataSize, vo] = varintDecode(buffer, offset + 64)
     this.#blksz = dataSize + 64 + vo
     this.#size = dataSize
