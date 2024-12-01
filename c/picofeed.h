@@ -112,30 +112,33 @@ size_t pf_block_body_size (const pf_block_t *block);
 const uint8_t *pf_block_body (const pf_block_t *block);
 
 /* --------------- POP-0201 Feed ---------------*/
+struct _pf_cache_s;
+
 typedef struct {
   size_t tail;
   size_t capacity;
   uint32_t flags;
-  // int _len;
   uint8_t *buffer;
+  struct _pfcache_s *_cache;
 } pico_feed_t;
 
 /**
  * @brief Initializes a writable feed
  *
  * Allocates memory which must be released
- * using pico_feed_deinit();
+ * using pf_deinit();
  *
  * @param feed pointer to mutable feed struct
  * @return error code
  */
-int pf_init (pico_feed_t *feed); // TODO: rename to from
+void pf_init (pico_feed_t *feed);
+
 /**
  * @brief Load or copies feed from buffer
  *
  * @param bytes buffer containing a feed
  * @param clone */
-int pf_from (pico_feed_t *feed, const uint8_t *bytes, size_t *clone);
+// int pf_from (pico_feed_t *feed, const uint8_t *bytes, size_t *len);
 
 /**
  * @brief Deinitalizes a writable feed
@@ -153,11 +156,11 @@ void pf_deinit (pico_feed_t *feed);
  *
  * @param feed Writable feed
  * @param data Application data
- * @param d_len Length of data
+ * @param data_len Length of data
  * @param pair author's secret
- * @return 0 on successful new element, 1 on EOF, -1 on error
+ * @return tail position, -1 on error
  */
-int pf_append (pico_feed_t *feed, const uint8_t *data, const size_t d_len, const pf_keypair_t pair);
+ssize_t pf_append (pico_feed_t *feed, const uint8_t *data, const size_t data_len, const pf_keypair_t pair);
 
 typedef struct pf_iterator_s {
   int idx;
@@ -214,7 +217,7 @@ pf_diff_error_t pf_diff (const pico_feed_t *a, const pico_feed_t *b, int *out);
  * @brief Creates a copy
  *
  * Allocates memory which must be released
- * using pico_feed_deinit();
+ * using pf_deinit();
  *
  * @param dst empty struct, do not pass an already initialized feed.
  */

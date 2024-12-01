@@ -143,8 +143,7 @@ static int test_pop0201_feed(void) {
   pico_crypto_keypair(&pair);
 
   pico_feed_t feed = {0};
-  int err = pf_init(&feed);
-  OK(0 == err, "Feed Initalized");
+  pf_init(&feed);
 
   const char *m1 = "Presales of V-modem 11k starting at €20+VAT - pm @telamo[h]n for more info";
   OK(0 < pf_append(&feed, (const uint8_t*)m1, strlen(m1), pair), "M1 appended");
@@ -178,9 +177,10 @@ static int test_pop0201_feed_diff(void) {
   pico_crypto_keypair(&pair);
 
   pico_feed_t a = {0};
-  OK0(0 == pf_init(&a));
+  pf_init(&a);
   pico_feed_t b = {0};
-  OK0(0 == pf_init(&b));
+  pf_init(&b);
+
   const char m0[] = "hello";
   pf_append(&a, (const uint8_t*)m0, strlen(m0), pair);
 
@@ -277,7 +277,33 @@ static int test_pop0201_feed_merge(void) {
   return 0;
 }
 
+static int
+test_cache_speed () {
+  pf_keypair_t pair;
+  pico_crypto_keypair(&pair);
+  pico_feed_t feed = {0};
+  pf_init(&feed);
+  int err = 0;
+  char msg[10];
+  for (int i = 0; i < 200; i++) {
+    sprintf(msg, "block%i", i);
+    // printf("Appending: %s\n", msg);
+    err = pf_append(&feed, (uint8_t*) msg, strlen(msg), pair);
+    assert(err > 0);
+  }
+  log_debug("appended  %i blocks, tail: %zu\n", pf_len(&feed), feed.tail);
+
+  pico_feed_t copy = {0};
+  pf_clone(&copy, &feed);
+  log_debug("cloned  %i blocks\n", pf_len(&copy));
+
+  pf_deinit(&feed);
+  pf_deinit(&copy);
+  return 0;
+}
+
 #define run_test(FUNC) do { \
+  log_info("# " #FUNC); \
   if ((FUNC()) != 0) { \
   log_error(#FUNC " failed!"); \
   return -1; } \
@@ -291,6 +317,7 @@ int main(void) {
   run_test(test_pop0201_feed);
   run_test(test_pop0201_feed_diff);
   run_test(test_pop0201_feed_merge);
+  run_test(test_cache_speed);
   log_info("Test end, took (%i)", (pico_now() - start));
 #ifdef BENCH
   dump_stats();

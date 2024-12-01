@@ -9,16 +9,20 @@
 
 #define debugger __builtin_debugtrap();
 #define error_check(err) assert(0 == (err)) // TODO: remove
-#define cmp(a, b, size) memcmp(a, b, size)
 
 #ifndef BENCH
 #define cpy(dst, src, size) memcpy(dst, src, size)
 #define zro(ptr, size) memset(ptr, 0x0, size);
-#define a_unsafe(n) malloc(n)
+#define cmp(a, b, size) memcmp(a, b, size)
+#define ualloc(n) malloc(n)
+#define salloc(t, n) calloc(t, n)
 #else
 static struct stats_s {
   int cpy;
   size_t cpy_bytes;
+
+  int cmp;
+  size_t cmp_bytes;
 
   int zro;
   size_t zro_bytes;
@@ -26,7 +30,12 @@ static struct stats_s {
   int malloc;
   size_t malloc_bytes;
 
+  int rlc;
+  size_t rlc_bytes;
+
   int verify;
+
+  int pf_next;
 } stats = {0};
 
 #define cpy(dst, src, size) \
@@ -39,19 +48,31 @@ static struct stats_s {
   stats.zro++; \
   stats.zro_bytes += n;
 
-#define a_unsafe(n) \
+#define ualloc(n) \
   malloc(n); \
   stats.malloc++; \
   stats.malloc_bytes += n;
 
+static inline int
+cmp(void *dst, const void *src, size_t n) {
+  stats.cmp++;
+  stats.cmp_bytes += n;
+  return memcmp(dst, src, n);
+}
+
 void dump_stats () {
+  printf("stats:\n");
   printf("CPY \t%i \t%zu B\n", stats.cpy, stats.cpy_bytes);
   printf("ZRO \t%i \t%zu B\n", stats.zro, stats.zro_bytes);
+  printf("CMP \t%i \t%zu B\n", stats.cmp, stats.cmp_bytes);
   printf("ALC \t%i \t%zu B\n", stats.malloc, stats.malloc_bytes);
+  printf("RLC \t%i \t%zu B\n", stats.rlc, stats.rlc_bytes);
   printf("VER \t%i \t%i B\n", stats.verify, 0);
+  printf("NXT \t%i \t%i B\n", stats.pf_next, 0);
 }
 #endif
 
+/* ---------------- POP-01 Identity ----------------*/
 
 #ifndef PICO_EXTERN_CRYPTO
 #include <monocypher.h>
@@ -67,21 +88,19 @@ void pico_public_from_secret(uint8_t key[32], const uint8_t secret[32]) {
 */
 
 // void pico_hash(uint8_t hash[32], const uint8_t *message, int m_len);
-void
-pico_crypto_keypair(pf_keypair_t *pair) {
+
+void pico_crypto_keypair(pf_keypair_t *pair) {
   uint8_t seed[32] = {0};
   pico_crypto_random(seed, 32);
   uint8_t _[32] = {0};
   crypto_eddsa_key_pair(pair->secret, _, seed);
 }
 
-void
-pico_crypto_sign(pf_signature_t signature, const uint8_t *message, const size_t m_len, const pf_keypair_t pair) {
+void pico_crypto_sign(pf_signature_t signature, const uint8_t *message, const size_t m_len, const pf_keypair_t pair) {
   crypto_eddsa_sign(signature, pair.secret, message, m_len);
 }
 
-int
-pico_crypto_verify(const pf_signature_t signature, const uint8_t *message, const size_t m_len, const pf_key_t pk) {
+int pico_crypto_verify(const pf_signature_t signature, const uint8_t *message, const size_t m_len, const pf_key_t pk) {
 #ifdef BENCH
   stats.verify++;
 #endif
@@ -130,6 +149,10 @@ varint_decode (const uint8_t *buffer, size_t *value) {
 }
 
 /* ---------------- POP-08 Time ----------------*/
+// TODO: redesign this idea;
+// In short the need arose from broadcasting block-timestamps/vector clocks
+// in beacons with ~40Byte MTU
+
 uint64_t pico_now(void) {
   struct timespec ts;
   int err = clock_gettime(CLOCK_REALTIME, &ts);
@@ -307,55 +330,87 @@ ssize_t pf_create_block (uint8_t *dst, pf_block_t *block, const pf_keypair_t pai
 
 #define MINIMUM_ALLOCAITION_UNIT 1024
 #define MAXIMUM_FEED_SIZE 65535
-int pf_init(pico_feed_t *feed) {
+
+// not sure about this approach
+struct _pfcache_s {
+  uint16_t n_blocks;
+  size_t verified;
+  // wishlist: array of pointers/block offsets
+};
+
+void pf_init(pico_feed_t *feed) {
   zro((uint8_t*)feed, sizeof(pico_feed_t));
-  feed->buffer = a_unsafe(MINIMUM_ALLOCAITION_UNIT);
-  if (feed->buffer == NULL) return -1;
+
+  feed->buffer = ualloc(MINIMUM_ALLOCAITION_UNIT);
+  assert(feed->buffer != NULL);
+
+  feed->_cache = calloc(1, sizeof(struct _pfcache_s));
+  assert(feed->_cache != NULL);
+
   feed->tail = 0;
   feed->capacity = MINIMUM_ALLOCAITION_UNIT;
-  return 0;
 }
 
 void pf_deinit(pico_feed_t *feed) {
   free(feed->buffer);
-  zro((uint8_t*)feed, sizeof(pico_feed_t));
+  free(feed->_cache);
+  zro((uint8_t *) feed, sizeof(pico_feed_t));
 }
 
 static void grow (pico_feed_t *feed, size_t min_cap) {
+#ifdef BENCH
+  stats.rlc++;
+  stats.rlc_bytes += min_cap - feed->capacity;
+#endif
+  assert(feed->capacity < min_cap);
   feed->capacity = (min_cap - (min_cap % MINIMUM_ALLOCAITION_UNIT)) + MINIMUM_ALLOCAITION_UNIT;
-  uint8_t *b = a_unsafe(feed->capacity);
-  assert(b != NULL);
-  cpy(b, feed->buffer, feed->tail);
-  free(feed->buffer);
-  feed->buffer = b;
+  feed->buffer = realloc(feed->buffer, feed->capacity);
+  assert(feed->buffer != NULL);
 };
 
-int pf_next (const pico_feed_t *feed, pf_iterator_t *iter) {
+int _pf_next_no_cache (const pico_feed_t *feed, pf_iterator_t *iter) {
   if (!iter->offset && !iter->idx) iter->idx = -1; // first run
 
   if (iter->offset >= feed->tail) return 1; // out of bounds
-
-  int skip_verify = iter->skip_verify; // || iter->idx < feed->_len;
-
-  int n = pf_decode_block(feed->buffer + iter->offset, &iter->block, skip_verify);
+#ifdef BENCH
+  ++stats.pf_next;
+#endif
+  // TODO: modify skip_verify between pf_next() calls
+  int n = pf_decode_block(feed->buffer + iter->offset, &iter->block, iter->skip_verify);
 
   if (n < 0) {
     zro(&iter->block, sizeof(pf_block_t)); // clear bad load
     return n; // decode failed, bad tail
-  } else {
-    iter->offset += n; // step offset
-    ++iter->idx;
-    return 0; // continue
   }
+
+  iter->offset += n; // step offset
+  ++iter->idx;
+  return 0; // continue
+}
+
+int pf_next(const pico_feed_t *feed, pf_iterator_t *iter) {
+  // use cache
+  struct _pfcache_s *cache = feed->_cache;
+  iter->skip_verify = iter->offset < cache->verified;
+
+  int res = _pf_next_no_cache(feed, iter);
+  if (res) return res;
+
+  // update cache
+  if (cache->verified < iter->offset) cache->verified = iter->offset;
+  if (cache->n_blocks == iter->idx) ++cache->n_blocks;
+
+  return res;
 }
 
 int pf_len (const pico_feed_t *feed) {
+  if (feed->_cache->n_blocks) return feed->_cache->n_blocks;
   pf_iterator_t iter = {0};
   while (!pf_next(feed, &iter));
   return iter.idx + 1;
 }
 
-/*
+
 int pf_last (const pico_feed_t *feed, pf_block_t *block) {
   int len = pf_len(feed);
   if (!len) return - 1;
@@ -363,7 +418,6 @@ int pf_last (const pico_feed_t *feed, pf_block_t *block) {
   pf_get(feed, block, len - 1);
   return 0;
 }
-*/
 
 int pf_get(const pico_feed_t *feed, pf_block_t *block, int idx) {
   int ret = 0;
@@ -378,8 +432,7 @@ int pf_get(const pico_feed_t *feed, pf_block_t *block, int idx) {
   return iter.idx;
 }
 
-int pf_append (pico_feed_t *feed, const uint8_t *data, const size_t data_len, const pf_keypair_t pair) {
-
+ssize_t pf_append (pico_feed_t *feed, const uint8_t *data, const size_t data_len, const pf_keypair_t pair) {
   // defaults
   pf_block_t block = {
     .compression = 0, // feed->flags & PF_LIBZ | PF_QOI https://github.com/phoboslab/qoi/blob/master/qoi.h#L252
@@ -390,10 +443,8 @@ int pf_append (pico_feed_t *feed, const uint8_t *data, const size_t data_len, co
   };
 
 
-  int len = pf_len(feed);
-  if (len) {
-    pf_block_t last = {0};
-    pf_get(feed, &last, len - 1);
+  pf_block_t last = {0};
+  if (0 == pf_last(feed, &last)) {
     cpy(block.psig, last.id, sizeof(block.psig));
     block.seq = last.seq + 1;
   }
@@ -408,14 +459,26 @@ int pf_append (pico_feed_t *feed, const uint8_t *data, const size_t data_len, co
   if (err != b_size) return err;
 
   feed->tail += b_size;
+  feed->_cache->n_blocks++;
   return feed->tail;
 }
 
 void pf_truncate(pico_feed_t *feed, int n) {
+  if (n == 0) {
+    feed->tail = 0;
+    zro(feed->_cache, sizeof(struct _pfcache_s));
+    return;
+  }
+
   pf_iterator_t iter = {0};
   while (0 == pf_next(feed, &iter)) {
-    if (!--n) feed->tail = iter.offset;
+    if (!--n) {
+      feed->tail = iter.offset;
+      zro(feed->_cache, sizeof(struct _pfcache_s));
+      break;
+    }
   }
+  assert(n == 0);
 }
 
 
@@ -460,9 +523,11 @@ pf_diff_error_t pf_diff(const pico_feed_t *a, const pico_feed_t *b, int *out) {
 void pf_clone (pico_feed_t *dst, const pico_feed_t *src) {
   assert(dst->buffer == NULL);
   dst->tail = src->tail;
-  dst->buffer = a_unsafe(dst->tail);
+  dst->buffer = ualloc(dst->tail);
+  dst->_cache = ualloc(sizeof(struct _pfcache_s));
   dst->capacity = dst->tail;
   cpy(dst->buffer, src->buffer, dst->tail);
+  cpy(dst->_cache, src->_cache, sizeof(struct _pfcache_s));
 }
 
 int pf_slice (pico_feed_t *dst, const pico_feed_t *src, int start_idx, int end_idx) {
