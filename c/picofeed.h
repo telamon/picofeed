@@ -13,10 +13,9 @@
 
 #define _pack __attribute__((packed))
 
-/*---------------- POP-01: IDENTITY ----------------*/
-#define PICO_KEY_SIZE 32
-#define PICO_SIG_SIZE 64
+#define BENCH
 
+/*---------------- POP-01: IDENTITY ----------------*/
 typedef uint8_t pf_key_t[32];
 typedef uint8_t pf_signature_t[64];
 
@@ -76,8 +75,14 @@ typedef struct pf_block_s {
   const uint8_t *body;
 } pf_block_t;
 
-int
-pf_decode_block(const uint8_t *bytes, pf_block_t *block, int no_verify);
+typedef enum {
+  EFAILED = -1,
+  EUNKHDR = -2,
+  EDUPHDR = -3,
+  EVERFAIL = -4
+} pf_decode_error_t;
+
+int pf_decode_block (const uint8_t *bytes, pf_block_t *block, int no_verify);
 
 /**
  * @brief creates a block segment
@@ -86,37 +91,32 @@ pf_decode_block(const uint8_t *bytes, pf_block_t *block, int no_verify);
  * @param pair secret key
  * @return int number of bytes written or <1 on error
  */
-ssize_t
-pf_create_block(uint8_t *dst, pf_block_t *block, const pf_keypair_t pair);
-
-int
-pf_verify_block(const pf_block_t *block);
+ssize_t pf_create_block (uint8_t *dst, pf_block_t *block, const pf_keypair_t pair);
 
 /**
- * @brief low level size estimator
- * use pf_sizeof(block) where applicable.
- */
-// size_t pf_estimated_block_size(const size_t data_length, const pf_block_type_t type);
-
-/**
- * @brief Size of entire block
+ * @brief estimate size of buffer given block info
  * @return size of block header + body
  */
-ssize_t pf_sizeof(const pf_block_t *block);
+ssize_t pf_sizeof (const pf_block_t *block);
+
 /**
  * @brief Size of block-body
  * @return size of block body / application data.
  */
-size_t pf_block_body_size(const pf_block_t *block);
+size_t pf_block_body_size (const pf_block_t *block);
+
 /**
  * @brief Location of body
  * @return pointer to start of body
  */
-const uint8_t *pf_block_body(const pf_block_t *block);
+const uint8_t *pf_block_body (const pf_block_t *block);
+
 /* --------------- POP-0201 Feed ---------------*/
 typedef struct {
   size_t tail;
   size_t capacity;
+  uint32_t flags;
+  // int _len;
   uint8_t *buffer;
 } pico_feed_t;
 
@@ -129,7 +129,13 @@ typedef struct {
  * @param feed pointer to mutable feed struct
  * @return error code
  */
-int pf_init(pico_feed_t *feed);
+int pf_init (pico_feed_t *feed); // TODO: rename to from
+/**
+ * @brief Load or copies feed from buffer
+ *
+ * @param bytes buffer containing a feed
+ * @param clone */
+int pf_from (pico_feed_t *feed, const uint8_t *bytes, size_t *clone);
 
 /**
  * @brief Deinitalizes a writable feed
@@ -137,7 +143,7 @@ int pf_init(pico_feed_t *feed);
  * by `pico_feed_init()`
  * @param feed Writable feed
  */
-void pf_deinit(pico_feed_t *feed);
+void pf_deinit (pico_feed_t *feed);
 
 /**
  * @brief Appends block to a writable feed
@@ -151,45 +157,45 @@ void pf_deinit(pico_feed_t *feed);
  * @param pair author's secret
  * @return 0 on successful new element, 1 on EOF, -1 on error
  */
-int pf_append(pico_feed_t *feed, const uint8_t *data, const size_t d_len, const pf_keypair_t pair);
+int pf_append (pico_feed_t *feed, const uint8_t *data, const size_t d_len, const pf_keypair_t pair);
 
-struct pf_iterator {
-  uint16_t idx;
-  // pf_block_type_t type;
+typedef struct pf_iterator_s {
+  int idx;
   size_t offset;
-  pf_block_t *block;
-};
+  int skip_verify;
+  pf_block_t block;
+} pf_iterator_t;
 
 /**
  * @brief Iterates through all blocks in buffer
  * @return error = -1, has_more = 0, done = 1
  */
-int pf_next(const pico_feed_t *feed, struct pf_iterator *iter);
+int pf_next (const pico_feed_t *feed, pf_iterator_t *iter);
 
 /**
  * @brief Count Blocks in a Feed
  * @return block height
  */
-int pf_len(const pico_feed_t *feed);
+int pf_len (const pico_feed_t *feed);
 
 /**
  * @brief Remove blocks
  * @param len
  * @return new block height
  */
-void pf_truncate(pico_feed_t *feed, int len);
+void pf_truncate (pico_feed_t *feed, int len);
 /**
  * @brief Get block at index
+ * @param block destination
  * @param n index
- * @return block pointer
  */
-pf_block_t* pf_get(const pico_feed_t *feed, int n);
+int pf_get(const pico_feed_t *feed, pf_block_t *block, int n);
 
 /**
- * @brief Get tail of feed
- * @return block pointer
+ * @brief Get last block on feed
+ * @return length of feed
  */
-pf_block_t* pf_last(const pico_feed_t *feed);
+// int pf_last (const pico_feed_t *feed, pf_block_t *block);
 
 typedef enum {
   OK = 0,
@@ -202,7 +208,7 @@ typedef enum {
  * @param out 0 when equal, positive block count when B is ahead, negative when B is behind.
  * @return error
  */
-pf_diff_error_t pf_diff(const pico_feed_t *a, const pico_feed_t *b, int *out);
+pf_diff_error_t pf_diff (const pico_feed_t *a, const pico_feed_t *b, int *out);
 
 /**
  * @brief Creates a copy
@@ -212,7 +218,7 @@ pf_diff_error_t pf_diff(const pico_feed_t *a, const pico_feed_t *b, int *out);
  *
  * @param dst empty struct, do not pass an already initialized feed.
  */
-void pf_clone(pico_feed_t *dst, const pico_feed_t *src);
+void pf_clone (pico_feed_t *dst, const pico_feed_t *src);
 
 /**
  * @brief Copies sub range of blocks
@@ -222,7 +228,7 @@ void pf_clone(pico_feed_t *dst, const pico_feed_t *src);
  * @param end_idx exclusive, negative wraps from src.end
  * @return number of blocks copied, value < 0 indicates error
  */
-int pf_slice(pico_feed_t *dst, const pico_feed_t *src, int start_idx, int end_idx);
+int pf_slice (pico_feed_t *dst, const pico_feed_t *src, int start_idx, int end_idx);
 
 /* ---------------- POP-08 Time ----------------*/
 /* V7 - Experimental */ // this is a painfully bad idea
@@ -240,7 +246,7 @@ int pf_slice(pico_feed_t *dst, const pico_feed_t *src, int start_idx, int end_id
  *
  * @return pico block timestamp
  */
-uint64_t pico_now(void);
+uint64_t pico_now (void);
 
 /**
  * @brief Decode pico-hundreds to epoch-millis
@@ -250,5 +256,10 @@ uint64_t pico_now(void);
 /**
  * @brief Parses block "date" fields
  */
-uint64_t pf_read_utc(const uint8_t src[5]);
+uint64_t pf_read_utc (const uint8_t src[5]);
+
+#ifdef BENCH
+void dump_stats ();
+#endif
+
 #endif

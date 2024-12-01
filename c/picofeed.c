@@ -4,11 +4,54 @@
 #include <stdlib.h>
 #include <memory.h>
 #include <assert.h>
-// #include <stdio.h>
-#define cpy(dst, src, size) memcpy(dst, src, size)
+
+#include <stdio.h>
+
+#define debugger __builtin_debugtrap();
+#define error_check(err) assert(0 == (err)) // TODO: remove
 #define cmp(a, b, size) memcmp(a, b, size)
+
+#ifndef BENCH
+#define cpy(dst, src, size) memcpy(dst, src, size)
 #define zro(ptr, size) memset(ptr, 0x0, size);
-#define error_check(err) assert(0 == (err))
+#define a_unsafe(n) malloc(n)
+#else
+static struct stats_s {
+  int cpy;
+  size_t cpy_bytes;
+
+  int zro;
+  size_t zro_bytes;
+
+  int malloc;
+  size_t malloc_bytes;
+
+  int verify;
+} stats = {0};
+
+#define cpy(dst, src, size) \
+  memcpy(dst, src, size); \
+  stats.cpy++; \
+  stats.cpy_bytes += size;
+
+#define zro(ptr, n) \
+  memset(ptr, 0, n); \
+  stats.zro++; \
+  stats.zro_bytes += n;
+
+#define a_unsafe(n) \
+  malloc(n); \
+  stats.malloc++; \
+  stats.malloc_bytes += n;
+
+void dump_stats () {
+  printf("CPY \t%i \t%zu B\n", stats.cpy, stats.cpy_bytes);
+  printf("ZRO \t%i \t%zu B\n", stats.zro, stats.zro_bytes);
+  printf("ALC \t%i \t%zu B\n", stats.malloc, stats.malloc_bytes);
+  printf("VER \t%i \t%i B\n", stats.verify, 0);
+}
+#endif
+
 
 #ifndef PICO_EXTERN_CRYPTO
 #include <monocypher.h>
@@ -39,6 +82,9 @@ pico_crypto_sign(pf_signature_t signature, const uint8_t *message, const size_t 
 
 int
 pico_crypto_verify(const pf_signature_t signature, const uint8_t *message, const size_t m_len, const pf_key_t pk) {
+#ifdef BENCH
+  stats.verify++;
+#endif
   return crypto_eddsa_check(signature, pk, message, m_len);
 };
 #endif
@@ -113,7 +159,6 @@ is_empty(const uint8_t *buffer, size_t len) {
 
 inline static int
 trail0 (const uint8_t *bytes, size_t len) {
-  __builtin_trap(); // TODO: test alignment
 #ifdef ENABLE_OPTIMIZATIONS
 #define T uint64_t
 #define N sizeof(T)
@@ -125,13 +170,6 @@ trail0 (const uint8_t *bytes, size_t len) {
   return len + 1;
 #endif
 }
-
-typedef enum {
-  EFAILED = -1,
-  EUNKHDR = -2,
-  EDUPHDR = -3,
-  EVERFAIL = -4
-} pf_decode_error_t;
 
 int
 pf_decode_block(const uint8_t *bytes, pf_block_t *block, int no_verify) {
@@ -195,8 +233,7 @@ pf_decode_block(const uint8_t *bytes, pf_block_t *block, int no_verify) {
   return o;
 }
 
-ssize_t
-pf_sizeof (const pf_block_t *block) {
+ssize_t pf_sizeof (const pf_block_t *block) {
   if (block->len < 1 || block->body == NULL) return -1;
 #define OVERHEAD 2
   size_t len = sizeof(pf_signature_t);
@@ -210,9 +247,7 @@ pf_sizeof (const pf_block_t *block) {
   return len + block->len;
 }
 
-
-ssize_t
-pf_create_block(uint8_t *dst, pf_block_t *block, const pf_keypair_t pair) {
+ssize_t pf_create_block (uint8_t *dst, pf_block_t *block, const pf_keypair_t pair) {
   ssize_t b_size = pf_sizeof(block);
   assert(b_size > 0);
 
@@ -239,7 +274,7 @@ pf_create_block(uint8_t *dst, pf_block_t *block, const pf_keypair_t pair) {
   if (block->seq) {
     dst[o++] = 0;
     dst[o++] = PICO_HDR_SEQ;
-    *((uint16_t *)dst + o) = block->seq;
+    *((uint16_t *) &dst[o]) = block->seq;
     o += sizeof(block->seq);
   }
 
@@ -268,25 +303,13 @@ pf_create_block(uint8_t *dst, pf_block_t *block, const pf_keypair_t pair) {
   return b_size;
 }
 
-// TODO: input must be raw bytes; block_t exists only post-verify
-/*
-int pf_verify_block(const pf_block_t *block) {
-  assert(is_empty(block->author, sizeof(block->author)));
-
-  int len = pf_sizeof(block);
-  assert(len > 0);
-
-  const uint8_t *message = block->body;
-  return pico_crypto_verify(block->id, block->body, len - sizeof(pf_signature_t), block->author);
-}*/
-
 /* ---------------- POP-0201 Feed ----------------*/
-/*
+
 #define MINIMUM_ALLOCAITION_UNIT 1024
 #define MAXIMUM_FEED_SIZE 65535
 int pf_init(pico_feed_t *feed) {
   zro((uint8_t*)feed, sizeof(pico_feed_t));
-  feed->buffer = malloc(MINIMUM_ALLOCAITION_UNIT);
+  feed->buffer = a_unsafe(MINIMUM_ALLOCAITION_UNIT);
   if (feed->buffer == NULL) return -1;
   feed->tail = 0;
   feed->capacity = MINIMUM_ALLOCAITION_UNIT;
@@ -298,44 +321,87 @@ void pf_deinit(pico_feed_t *feed) {
   zro((uint8_t*)feed, sizeof(pico_feed_t));
 }
 
-pf_block_t* pf_last(const pico_feed_t *feed) {
-  pf_block_t *block = NULL;
-  struct pf_iterator iter = {0};
-  while (pf_next(feed, &iter) == 0) {
-    block = iter.block;
-  }
-  return block;
-}
-
-static int grow(pico_feed_t *feed, size_t min_cap) {
+static void grow (pico_feed_t *feed, size_t min_cap) {
   feed->capacity = (min_cap - (min_cap % MINIMUM_ALLOCAITION_UNIT)) + MINIMUM_ALLOCAITION_UNIT;
-  feed->buffer = realloc(feed->buffer, feed->capacity);
-  if (feed->buffer == NULL) return -1;
-  return 0;
+  uint8_t *b = a_unsafe(feed->capacity);
+  assert(b != NULL);
+  cpy(b, feed->buffer, feed->tail);
+  free(feed->buffer);
+  feed->buffer = b;
 };
 
-int pf_append(pico_feed_t *feed, const uint8_t *data, const size_t d_len, const pf_keypair_t pair) {
-  pf_block_t *last = pf_last(feed);
+int pf_next (const pico_feed_t *feed, pf_iterator_t *iter) {
+  if (!iter->offset && !iter->idx) iter->idx = -1; // first run
+
+  if (iter->offset >= feed->tail) return 1; // out of bounds
+
+  int skip_verify = iter->skip_verify; // || iter->idx < feed->_len;
+
+  int n = pf_decode_block(feed->buffer + iter->offset, &iter->block, skip_verify);
+
+  if (n < 0) {
+    zro(&iter->block, sizeof(pf_block_t)); // clear bad load
+    return n; // decode failed, bad tail
+  } else {
+    iter->offset += n; // step offset
+    ++iter->idx;
+    return 0; // continue
+  }
+}
+
+int pf_len (const pico_feed_t *feed) {
+  pf_iterator_t iter = {0};
+  while (!pf_next(feed, &iter));
+  return iter.idx + 1;
+}
+
+/*
+int pf_last (const pico_feed_t *feed, pf_block_t *block) {
+  int len = pf_len(feed);
+  if (!len) return - 1;
+
+  pf_get(feed, block, len - 1);
+  return 0;
+}
+*/
+
+int pf_get(const pico_feed_t *feed, pf_block_t *block, int idx) {
+  int ret = 0;
+  pf_iterator_t iter = {0};
+  while (ret != 1) {
+    ret = pf_next(feed, &iter);
+    if (ret < 0) return ret;
+    if (iter.idx == idx) break;
+  }
+  assert(iter.idx == idx);
+  memcpy(block, &iter.block, sizeof(pf_block_t));
+  return iter.idx;
+}
+
+int pf_append (pico_feed_t *feed, const uint8_t *data, const size_t data_len, const pf_keypair_t pair) {
 
   // defaults
   pf_block_t block = {
-    .compression = 0,
-    .date = 1,
-    .author = {1},
-    .len = d_len,
+    .compression = 0, // feed->flags & PF_LIBZ | PF_QOI https://github.com/phoboslab/qoi/blob/master/qoi.h#L252
+    .date = 1, // feed->flags & PF_NODATE || PF_QR
+    .author = {1}, // feed->flags & PF_NOAUTH
+    .len = data_len,
     .body = data
   };
 
-  if (last != NULL) {
-    cpy(block.psig, last->id, sizeof(block.psig));
-    block.seq = last->seq + 1;
+
+  int len = pf_len(feed);
+  if (len) {
+    pf_block_t last = {0};
+    pf_get(feed, &last, len - 1);
+    cpy(block.psig, last.id, sizeof(block.psig));
+    block.seq = last.seq + 1;
   }
 
   const size_t b_size = pf_sizeof(&block);
 
   if (b_size > feed->capacity - feed->tail) {
-    int err = grow(feed, feed->tail + b_size);
-    if (err) return err;
+    grow(feed, feed->tail + b_size);
   }
 
   int err = pf_create_block(&feed->buffer[feed->tail], &block, pair);
@@ -345,37 +411,13 @@ int pf_append(pico_feed_t *feed, const uint8_t *data, const size_t d_len, const 
   return feed->tail;
 }
 
-int pf_next(const pico_feed_t *feed, struct pf_iterator *iter) {
-  if (iter->offset >= feed->tail) return 1; // EOC
-  iter->block = (pf_block_t*) (feed->buffer + iter->offset);
-  iter->type = pf_typeof(iter->block);
-  if (iter->type == INVALID_BLOCK) return -1;
-  iter->offset += pf_sizeof(iter->block);
-  iter->idx++;
-  return 0;
-}
-
-int pf_len(const pico_feed_t *feed) {
-  struct pf_iterator iter = {0};
-  while (0 == pf_next(feed, &iter));
-  return iter.idx;
-}
-
 void pf_truncate(pico_feed_t *feed, int n) {
-  struct pf_iterator iter = {0};
+  pf_iterator_t iter = {0};
   while (0 == pf_next(feed, &iter)) {
-    if (!n) feed->tail = iter.offset;
-    if (--n < 0) iter.block->bar.magic = 0xff;
+    if (!--n) feed->tail = iter.offset;
   }
 }
 
-pf_block_t* pf_get(const pico_feed_t *feed, int n) {
-  struct pf_iterator iter = {0};
-  while (0 == pf_next(feed, &iter)) {
-    if (!n--) return iter.block;
-  }
-  return NULL;
-}
 
 pf_diff_error_t pf_diff(const pico_feed_t *a, const pico_feed_t *b, int *out) {
   #define yield(x) do { *out = (x); return OK; } while(0)
@@ -384,69 +426,77 @@ pf_diff_error_t pf_diff(const pico_feed_t *a, const pico_feed_t *b, int *out) {
   const int len_b = pf_len(b);
   if (!len_a) yield(len_b);
   if (!len_b) yield(-len_a);
-  struct pf_iterator it_a = {0};
-  struct pf_iterator it_b = {0};
+  pf_iterator_t it_a = {0};
+  pf_iterator_t it_b = {0};
   error_check(pf_next(b, &it_b)); // step b
   short found = 0;
+
   // align feeds
   while(0 == pf_next(a, &it_a)) {
-    if (0 == cmp(it_a.block->net.psig, it_b.block->net.psig, PICO_SIG_SIZE)) { ++found; break; }
-    if (0 == cmp(it_a.block->net.id, it_b.block->net.psig, PICO_SIG_SIZE)) { --found; break; }
+    if (0 == cmp(it_a.block.psig, it_b.block.psig, sizeof(pf_signature_t))) { ++found; break; }
+    if (0 == cmp(it_a.block.id, it_b.block.psig, sizeof(pf_signature_t))) { --found; break; }
   }
-  // printf("[ALIGNMENT] found: %i, idx_a: %i/%i, idx_b: %i/%i, shear: %i\n", found, it_a.idx, len_a, it_b.idx, len_b, shear);
+
+  // printf("[ALIGNMENT] found: %i, idx_a: %i/%i, idx_b: %i/%i\n", found, it_a.idx, len_a, it_b.idx, len_b);
   if (!found && it_a.idx == len_a) return UNRELATED; // End reach no match
   if (found == -1) { // B[0].parent is at A[i]
-    if (it_a.idx + 1 == len_a) yield(len_b); // all new
+    if (it_a.idx == len_a - 1) yield(len_b); // all new
     else error_check(pf_next(a, &it_a)); // unshear
   }
+
   // feeds realigned, compare blocks after common parent
   while(1) {
-    if (0 != cmp(it_a.block->net.id, it_b.block->net.id, PICO_SIG_SIZE)) return DIVERGED;
-    if (!(it_a.idx < len_a && it_b.idx < len_b)) break;
-      pf_next(a, &it_a);
-      pf_next(b, &it_b);
+    if (0 != cmp(it_a.block.id, it_b.block.id, sizeof(pf_signature_t))) return DIVERGED;
+    if (!(it_a.idx < len_a - 1 && it_b.idx < len_b - 1)) break;
+    pf_next(a, &it_a);
+    pf_next(b, &it_b);
   }
-  if (it_a.idx == len_a && it_b.idx == len_b) yield(0); // feeds are equal
+  if (it_a.idx == len_a - 1 && it_b.idx == len_b - 1) yield(0); // feeds are equal
   else if (it_a.idx == len_a) yield(len_b - it_b.idx); // A exhausted, remains of B
   else yield(it_a.idx - len_a); // B exhausted, remains of A
+#undef yield
 }
 
-void pf_clone(pico_feed_t *dst, const pico_feed_t *src) {
+void pf_clone (pico_feed_t *dst, const pico_feed_t *src) {
   assert(dst->buffer == NULL);
   dst->tail = src->tail;
-  dst->buffer = malloc(dst->tail);
+  dst->buffer = a_unsafe(dst->tail);
   dst->capacity = dst->tail;
   cpy(dst->buffer, src->buffer, dst->tail);
 }
 
-int pf_slice(
-    pico_feed_t *dst,
-    const pico_feed_t *src,
-    int start_idx,
-    int end_idx
-) {
+int pf_slice (pico_feed_t *dst, const pico_feed_t *src, int start_idx, int end_idx) {
   if (start_idx < 0 || end_idx < 0) {
     const int src_len = pf_len(src);
     if (start_idx < 0) start_idx = src_len + start_idx;
-    if (end_idx < 0) end_idx = src_len + end_idx + 1;
+    if (end_idx < 0) end_idx = src_len + end_idx;
   }
-  int len = 0;
-  struct pf_iterator iter = {0};
-  int i = 0;
-  int off = 0;
-  while (!pf_next(src, &iter) && i < end_idx) {
-    if (i++ < start_idx) {
+
+  size_t len = 0;
+  size_t off = 0;
+  pf_iterator_t iter = {0};
+  while (!pf_next(src, &iter) && iter.idx < end_idx) {
+    if (iter.idx < start_idx) {
       off = iter.offset;
-      continue;
+    } else {
+      len += pf_sizeof(&iter.block);
     }
-    len += pf_sizeof(iter.block);
   }
+  len = iter.offset - off;
+
   if (!len) return 0; // Nothing to do
-  if (dst->buffer != NULL) pf_truncate(dst, 0);
-  else assert(0 == pf_init(dst));
+
+  assert(dst->buffer != NULL);
+  pf_truncate(dst, 0);
+
   if (dst->capacity < len) grow(dst, len);
   cpy(dst->buffer, src->buffer + off, len);
   dst->tail = len;
-  return i - start_idx; // TODO: return len maybe?
+  return iter.idx - start_idx + 1;
 }
-*/
+
+
+#undef debugger
+#undef cpy
+#undef cmp
+#undef zro

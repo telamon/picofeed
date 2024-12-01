@@ -6,7 +6,7 @@
 #include "../picofeed.h"
 #include <stdint.h>
 #include "log.h"
-#define PKSTR "%02x%02x%02x...%02x%02x%02x"
+#define PKSTR "%02x%02x%02x%02x..%02x%02x"
 #define PK2STR(p) (p)[0],(p)[1],(p)[2],(p)[3],(p)[30],(p)[31]
 #define SIG2STR(p) (p)[0],(p)[1],(p)[2],(p)[61],(p)[62],(p)[63]
 
@@ -47,53 +47,42 @@ void hexdump(const void* buffer, size_t size) {
 } while(0)
 
 static void inspect_body(const pico_feed_t *feed) {
-  struct pf_iterator iter = {0};
+  pf_iterator_t iter = {0};
   while (0 == pf_next(feed, &iter)) {
-    int bsize = pf_block_body_size(iter.block);
+    int bsize = iter.block.len;
     char *txt = calloc(1, bsize);
-    memcpy(txt, pf_block_body(iter.block), bsize);
+    memcpy(txt, iter.block.body, bsize);
     log_debug("BODY: %s", txt);
     free(txt);
   }
 }
-/*
+
 static void inspect(const pico_feed_t *feed) {
-  struct pf_iterator iter = {0};
+  printf("# FEED cap = %zu, tail = %zu, [flags: %i]\n", feed->capacity, feed->tail, feed->flags);
+  pf_iterator_t iter = {0};
   int i = 0;
-  while(0 == pf_next(feed, &iter)){
-    pf_block_type_t type = iter.type;
-    const pf_block_t* block = iter.block;
+  while(pf_next(feed, &iter) == 0){
+    const pf_block_t* block = &iter.block;
     size_t b_size = pf_sizeof(block);
-    printf("=== Block %i [type %i, size %lu B] ===\n", i, type, b_size);
-    printf("id: "); hexstr(block->net.id, 64);printf("\n");
-    if (type == FOLLOW) {
-      printf("psig: "PKSTR"\n", SIG2STR(block->bar.child.psig));
-    }
-    if (type == CANONICAL) {
-      time_t t = (long)(pf_read_utc(block->net.date)/1000);
+    printf("### .block = %i [size %lu B] ===\n", i, b_size);
+    printf("- id:   \t`"PKSTR"`\n", SIG2STR(block->id));
+    printf("- psig: \t`"PKSTR"`\n", SIG2STR(block->psig));
+    printf("- author:\t`"PKSTR"`\n", PK2STR(block->author));
+    printf("- seq:\t `%i`\n", block->seq);
+    if (1) {
+      time_t t = (long)(pf_read_utc((uint8_t *)&block->date)/1000);
       char tstr[80];
       strftime(tstr, 80, "%Y-%m-%d %H:%M:%S", localtime(&t));
-      printf("date: %s\n", tstr);
-      printf("author: "PKSTR"\n", PK2STR(block->net.author));
-      printf("dst: "); hexstr(block->net.dst, 32);printf("\n");
-      printf("psig: "PKSTR"\n", SIG2STR(block->net.psig));
+      printf("- date: \t`%s`\n", tstr);
+      // printf("dst: "); hexstr(block->net.dst, 32);printf("\n");
     }
-
-    switch(type) {
-      case CANONICAL:
-        printf("= HDR\n");
-        hexdump(&block->net, sizeof(block->net));
-        printf("= DATA\n");
-        hexdump(block->net.body, block->net.length);
-        printf("Verified: %i\n", pf_verify_block(block, block->net.author) == 0);
-        break;
-      default:
-        printf("not implemented\n");
-    }
+    printf("### .data [%zuB]\n```\n", block->len);
+    hexdump(block->body, block->len);
     ++i;
+    printf("\n```\n");
   }
   printf("# End Of Chain\n\n");
-}*/
+}
 
 static int test_pop01_keygen(void) {
   pf_keypair_t pair = {0};
@@ -127,6 +116,7 @@ static int test_pop02_blocksegment(void) {
     .author = {1},
     .seq = 0,
     .psig = {0},
+    .date = 1,
     .body = (uint8_t *) message,
     .len = strlen(message)
   };
@@ -134,10 +124,11 @@ static int test_pop02_blocksegment(void) {
   int res = pf_create_block(buffer, &a, pair);
   OK(res > 0, "Create Block");
 
-  hexdump(buffer, res);
+  // hexdump(buffer, res);
 
   pf_block_t b = {0};
-  pf_decode_block(buffer, &b, 0);
+  int n = pf_decode_block(buffer, &b, 0);
+  OK(n == res, "equal amount of bytes decoded");
 
   log_debug("block created, @time %i", a.date);
 
@@ -147,7 +138,6 @@ static int test_pop02_blocksegment(void) {
   return 0;
 }
 
-/*
 static int test_pop0201_feed(void) {
   pf_keypair_t pair = {0};
   pico_crypto_keypair(&pair);
@@ -157,14 +147,23 @@ static int test_pop0201_feed(void) {
   OK(0 == err, "Feed Initalized");
 
   const char *m1 = "Presales of V-modem 11k starting at €20+VAT - pm @telamo[h]n for more info";
-  OK(0 < pf_append(&feed, (const uint8_t*)m1, strlen(m1), pair), "M0 appended");
+  OK(0 < pf_append(&feed, (const uint8_t*)m1, strlen(m1), pair), "M1 appended");
+  OK(1 == pf_len(&feed), "block appended");
 
   // inspect(&feed);
   const char *m2 = "The prototype units are tiny stock chips that come preloaded with firmware";
-  OK(0 < pf_append(&feed, (const uint8_t*)m2, strlen(m2), pair), "M1 appended");
-  OK(0 == memcmp(pf_get(&feed, 1)->net.psig, pf_get(&feed, 0)->net.id, sizeof(pico_signature_t)), "psig verified");
+  OK(0 < pf_append(&feed, (const uint8_t*)m2, strlen(m2), pair), "M2 appended");
+
+  inspect(&feed);
+  pf_block_t b0, b1;
+  pf_get(&feed, &b0, 0);
+  pf_get(&feed, &b1, 1);
+
+  OK(0 == memcmp(b1.psig, b0.id, sizeof(pf_signature_t)), "psig verified");
+
   const char *m3 = "It might or might not work, just plug it in and find out.";
   OK(0 < pf_append(&feed, (const uint8_t*)m3, strlen(m3), pair), "M2 appended");
+
   // inspect(&feed);
   // hexdump(feed.buffer, feed.tail);
   OK(3 == pf_len(&feed), "3 blocks counted");
@@ -175,7 +174,7 @@ static int test_pop0201_feed(void) {
 }
 
 static int test_pop0201_feed_diff(void) {
-  pico_keypair_t pair = {0};
+  pf_keypair_t pair = {0};
   pico_crypto_keypair(&pair);
 
   pico_feed_t a = {0};
@@ -215,7 +214,7 @@ static int test_pop0201_feed_diff(void) {
 }
 
 static int test_pop0201_feed_merge(void) {
-  pico_keypair_t pair = {0};
+  pf_keypair_t pair = {0};
   pico_crypto_keypair(&pair);
   const char msgs[][40] = {
     "Apples are sour",
@@ -232,29 +231,43 @@ static int test_pop0201_feed_merge(void) {
   for (int i = 0; i < 8; i++) {
     pf_append(&fa, (uint8_t*) msgs[i], strlen(msgs[i]), pair);
   }
+
   OK(8 == pf_len(&fa), "8 messages appended");
 
   pico_feed_t fb = {0};
-
-  OK(8 == pf_slice(&fb, &fa, 0, -1), "returns 8");
+  pf_init(&fb);
+  int res = pf_slice(&fb, &fa, 0, -1);
+  OK(8 == res, "returns 8");
   int diff = 0;
   OK(0 == pf_diff(&fa, &fb, &diff), "no error");
+  // printf("Feed A\n");
+  // inspect_body(&fa);
+  // printf("Feed B\n");
+  // inspect_body(&fb);
+
   OK(0 == diff, "no diff");
   OK(8 == pf_len(&fb), "8 messages sliced");
   OK(pf_len(&fb) == pf_len(&fa), "lengths equal");
 
-  int res = pf_slice(&fb, &fa, 3, -2);
+  res = pf_slice(&fb, &fa, 3, -2);
   OK(res == 4, "4 blocks sliced");
   // inspect_body(&fb);
+  pf_block_t a, b;
+  pf_get(&fb, &b, 0);
+  pf_get(&fa, &a, 3);
+
   OK(0 == memcmp(
-        pf_get(&fb, 0)->net.id,
-        pf_get(&fa, 3)->net.id,
-        sizeof(pico_signature_t)
+        b.id,
+        a.id,
+        sizeof(pf_signature_t)
   ), "first block correct");
+
+  pf_get(&fb, &b, 3);
+  pf_get(&fa, &a, 6);
   OK(0 == memcmp(
-        pf_get(&fb, 3)->net.id,
-        pf_get(&fa, 6)->net.id,
-        sizeof(pico_signature_t)
+        b.id,
+        a.id,
+        sizeof(pf_signature_t)
   ), "last block correct");
 
   // hexdump(fb.buffer, fb.tail);
@@ -263,7 +276,6 @@ static int test_pop0201_feed_merge(void) {
   pf_deinit(&fa);
   return 0;
 }
-*/
 
 #define run_test(FUNC) do { \
   if ((FUNC()) != 0) { \
@@ -276,9 +288,12 @@ int main(void) {
   log_info("Test start");
   run_test(test_pop01_keygen);
   run_test(test_pop02_blocksegment);
-  /*run_test(test_pop0201_feed);      */
-  /*run_test(test_pop0201_feed_diff); */
-  /*run_test(test_pop0201_feed_merge);*/
+  run_test(test_pop0201_feed);
+  run_test(test_pop0201_feed_diff);
+  run_test(test_pop0201_feed_merge);
   log_info("Test end, took (%i)", (pico_now() - start));
+#ifdef BENCH
+  dump_stats();
+#endif
   return 0;
 }
