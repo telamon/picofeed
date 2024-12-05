@@ -27,7 +27,6 @@ typedef union {
   };
 } pf_keypair_t;
 
-
 /* required crypto-primitives,
  * #define PICO_EXTERN_CRYPTO
  * to disable built-in implementions.
@@ -41,23 +40,36 @@ void pico_crypto_sign(pf_signature_t signature, const uint8_t *message, const si
 int pico_crypto_verify(const pf_signature_t signature, const uint8_t *message, const size_t m_len, const uint8_t pk[32]);
 /* end of crypto */
 
-/*---------------- POP-02: BLOCK FORMAT ----------------*/
-#define PICO_MAGIC 0b10100000
+/*---------------- POP-02: BLOCK PRIMITIVE ----------------*/
+typedef enum {
+  // 8Bit
+  HDR8_POP_VERSION = 0,     // invalidates assumptions below if set
+  HDR8_COMPRESSION = 5,
 
-#define PICO_BLOCK_SIZE 1024
+  // 16Bit
+  HDR16_SEQ = 16,
+  HDR16_MIME,
 
-#define PICO_HDR_AUTHOR       0x01 // uint8[32]
-#define PICO_HDR_PSIG         0x02 // uint8[64]
-#define PICO_HDR_SEQ          0x03 // uint16 (a.k.a block-height)
-#define PICO_HDR_DATE         0x04 // uint8[5]
-#define PICO_HDR_COMPRESSION  0x05 // uint8
-#define PICO_HDR_LOCATION     0x06 // uint64
-#define PICO_HDR_VER          0x08 // uint8[3] M.m.p - uint[8] appname
+  // 32Bit
+  HDR32_APPLICATION = 32,   // hint of purpose
+  HDR32_COLOR = 32,         // rgba - test
 
-// 0x127 > Userland headers
+  // 64Bit
+  HDR64_DATE = 64,
+  HDR64_GEOCODE0,           // vec2(lat, lng) - origin
+  HDR64_GEOCODE1,           // vec2(lat, lng) - destination
+  HDR64_POLAR3D,            // vec3(phi, theta, radius)
 
-/* [x] TODO: update specs */
-/* [ ] TODO: REDO */
+  // 256bit
+  HDR256_AUTHOR = 96,
+  HDR256_BOX,
+  HDR256_TO,
+
+  // 512bit
+  HDR512_PARENT = 112       // TODO: repeatable
+
+  // > 127 Application defined
+} pico_header_t;
 
 // typedef uint64_t pf_vec2;
 // typedef uint64_t pf_vec3;
@@ -82,6 +94,10 @@ typedef enum {
   EVERFAIL = -4
 } pf_decode_error_t;
 
+/**
+ * @brief loads bytes into block
+ * @return bytes-read or pf_decode_error_t
+ */
 int pf_decode_block (const uint8_t *bytes, pf_block_t *block, int no_verify);
 
 /**
@@ -94,32 +110,30 @@ int pf_decode_block (const uint8_t *bytes, pf_block_t *block, int no_verify);
 ssize_t pf_create_block (uint8_t *dst, pf_block_t *block, const pf_keypair_t pair);
 
 /**
- * @brief estimate size of buffer given block info
+ * @brief estimate size required to hold data + block info
  * @return size of block header + body
  */
 ssize_t pf_sizeof (const pf_block_t *block);
 
 /**
- * @brief Size of block-body
- * @return size of block body / application data.
+ * @brief Fast Iterator
+ * Does not load data nor verify signatures.
+ *
+ * @return offset of next block or pf_decode_error_t
  */
-size_t pf_block_body_size (const pf_block_t *block);
-
-/**
- * @brief Location of body
- * @return pointer to start of body
- */
-const uint8_t *pf_block_body (const pf_block_t *block);
+ssize_t pf_next_block_offset (const uint8_t *buffer);
 
 /* --------------- POP-0201 Feed ---------------*/
-struct _pf_cache_s;
+/**
+ * Designed to mimic JS-api, caution: allocates memory
+ */
 
 typedef struct {
   size_t tail;
   size_t capacity;
   uint32_t flags;
+  uint8_t reserved[8];
   uint8_t *buffer;
-  struct _pfcache_s *_cache;
 } pico_feed_t;
 
 /**
@@ -148,6 +162,19 @@ void pf_init (pico_feed_t *feed);
  */
 void pf_deinit (pico_feed_t *feed);
 
+typedef struct pf_iterator_s {
+  int idx;
+  size_t offset;
+  int skip_verify;
+  pf_block_t block;
+} pf_iterator_t;
+
+/**
+ * @brief Iterates through all blocks in buffer
+ * @return error = -1, has_more = 0, done = 1
+ */
+int pf_next (const pico_feed_t *feed, pf_iterator_t *iter);
+
 /**
  * @brief Appends block to a writable feed
  *
@@ -161,19 +188,6 @@ void pf_deinit (pico_feed_t *feed);
  * @return tail position, -1 on error
  */
 ssize_t pf_append (pico_feed_t *feed, const uint8_t *data, const size_t data_len, const pf_keypair_t pair);
-
-typedef struct pf_iterator_s {
-  int idx;
-  size_t offset;
-  int skip_verify;
-  pf_block_t block;
-} pf_iterator_t;
-
-/**
- * @brief Iterates through all blocks in buffer
- * @return error = -1, has_more = 0, done = 1
- */
-int pf_next (const pico_feed_t *feed, pf_iterator_t *iter);
 
 /**
  * @brief Count Blocks in a Feed

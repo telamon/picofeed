@@ -5,6 +5,7 @@
 #include <assert.h>
 #include "../picofeed.h"
 #include <stdint.h>
+
 #include "log.h"
 #define PKSTR "%02x%02x%02x%02x..%02x%02x"
 #define PK2STR(p) (p)[0],(p)[1],(p)[2],(p)[3],(p)[30],(p)[31]
@@ -16,6 +17,15 @@
 } while (0)
 #define OK0(exp) OK(exp, ".")
 #define debugger __builtin_debugtrap()
+
+#define MEASURE(LABEL, CODE) \
+{ \
+  struct timespec start, end; \
+  clock_gettime(CLOCK_MONOTONIC, &start); \
+  CODE; \
+  clock_gettime(CLOCK_MONOTONIC, &end); \
+  log_warn(LABEL" time %fms\n", (((end).tv_sec - (start).tv_sec) * 1000 + ((end).tv_nsec - (start).tv_nsec) / 1000000.0)); \
+}
 
 void hexdump16(const void* buffer, size_t size) {
   const uint8_t* byteBuffer = (const uint8_t*)buffer;
@@ -138,7 +148,7 @@ static int test_pop02_blocksegment(void) {
   return 0;
 }
 
-static int test_pop0201_feed(void) {
+static int test_pop0201_feed (void) {
   pf_keypair_t pair = {0};
   pico_crypto_keypair(&pair);
 
@@ -153,7 +163,7 @@ static int test_pop0201_feed(void) {
   const char *m2 = "The prototype units are tiny stock chips that come preloaded with firmware";
   OK(0 < pf_append(&feed, (const uint8_t*)m2, strlen(m2), pair), "M2 appended");
 
-  inspect(&feed);
+  // inspect(&feed);
   pf_block_t b0, b1;
   pf_get(&feed, &b0, 0);
   pf_get(&feed, &b1, 1);
@@ -166,6 +176,7 @@ static int test_pop0201_feed(void) {
   // inspect(&feed);
   // hexdump(feed.buffer, feed.tail);
   OK(3 == pf_len(&feed), "3 blocks counted");
+
   pf_truncate(&feed, 2);
   OK(2 == pf_len(&feed), "2 blocks remain");
   pf_deinit(&feed);
@@ -302,6 +313,55 @@ test_cache_speed () {
   return 0;
 }
 
+static int test_pop02_fast_iterator (void) {
+  pf_keypair_t pair;
+  pico_crypto_keypair(&pair);
+
+  pico_feed_t feed;
+  pf_init(&feed);
+
+  int err = 0;
+  char msg[10];
+  for (int i = 0; i < 200; i++) {
+    sprintf(msg, "block%i", i);
+    err = pf_append(&feed, (uint8_t*) msg, strlen(msg), pair);
+    assert(err > 0);
+  }
+
+  pf_block_t block;
+  assert(0 == pf_get(&feed, &block, 0));
+
+  const uint8_t *bytes = feed.buffer;
+
+  ssize_t n = pf_next_block_offset(bytes);
+  OK(n == pf_sizeof(&block), "blocksize determined w/o loading");
+
+  int fast_len = 0;
+  MEASURE("fast length check",
+    int offset = 0;
+    while (offset < feed.tail) {
+      n = pf_next_block_offset(&bytes[offset]);
+      assert(n > 0);
+      fast_len++;
+      offset += n;
+    }
+  )
+  int slow_len = 0;
+  MEASURE("slow", slow_len = pf_len(&feed));
+  OK(fast_len == slow_len, "n-blocks determined");
+
+  MEASURE("10x200 iterations",
+    int s = 0;
+    for (int i = 0; i < 100; i++) {
+      s += pf_len(&feed);
+    }
+    printf("done %i steps\n", s);
+  )
+
+  pf_deinit(&feed);
+  return 0;
+}
+
 #define run_test(FUNC) do { \
   log_info("# " #FUNC); \
   if ((FUNC()) != 0) { \
@@ -318,9 +378,11 @@ int main(void) {
   run_test(test_pop0201_feed_diff);
   run_test(test_pop0201_feed_merge);
   run_test(test_cache_speed);
-  log_info("Test end, took (%i)", (pico_now() - start));
+  run_test(test_pop02_fast_iterator);
+  log_info("Test end, took (%ims)", (pico_now() - start));
 #ifdef BENCH
   dump_stats();
 #endif
   return 0;
 }
+
