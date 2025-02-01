@@ -1,14 +1,11 @@
 #include "picofeed.h"
-#include <stdint.h>
+
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <stdlib.h>
-#include <memory.h>
+
 #include <assert.h>
 
-#include <stdio.h>
-
-#define debugger __builtin_debugtrap();
 #define error_check(err) assert(0 == (err)) // TODO: remove
 
 #ifndef BENCH
@@ -158,7 +155,7 @@ uint64_t pico_now(void) {
   struct timespec ts;
   int err = clock_gettime(CLOCK_REALTIME, &ts);
   error_check(err);
-  // printf("tv_sec: %lu, tv_nsec: %lu\n", ts.tv_sec, ts.tv_nsec);
+  // printf("tv_sec: %lu, tv_nsec: %lu, pop8: %lu\n", ts.tv_sec, ts.tv_nsec, p);
   return (100LLU * (uint64_t)(ts.tv_sec - BEGINNING_OF_TIME) + (uint64_t)(ts.tv_nsec / 10000000LLU)) & UINT40_MASK;
 }
 
@@ -215,16 +212,19 @@ int pf_decode_block(const uint8_t *bytes, pf_block_t *block, int no_verify) {
         block->seq = *(uint16_t *) &bytes[o];
         o += sizeof(uint16_t);
         break;
-      /*
-      case PICO_HDR_LOCATION:
-        if (block->location != 0) return -EDUPHDR;
-        block->location = *(uint64_t *) &bytes[bo];
-        bo += sizeof(uint64_t);
-        break;
-      */
       case HDR64_DATE:
         if (headers_set[HDR64_DATE]++) return -EDUPHDR;
         block->date = *(uint64_t *) &bytes[o];
+        o += sizeof(uint64_t);
+        break;
+      case HDR64_GEOCODE0:
+        if (headers_set[HDR64_GEOCODE0]++) return -EDUPHDR;
+        block->geo0 = *(uint64_t *) &bytes[o];
+        o += sizeof(uint64_t);
+        break;
+      case HDR64_GEOCODE1:
+        if (headers_set[HDR64_GEOCODE1]++) return -EDUPHDR;
+        block->geo1 = *(uint64_t *) &bytes[o];
         o += sizeof(uint64_t);
         break;
 
@@ -255,6 +255,8 @@ ssize_t pf_sizeof (const pf_block_t *block) {
   if (block->seq) len += sizeof(block->seq) + OVERHEAD;
   if (block->date) len += sizeof(block->date) + OVERHEAD;
   if (block->compression) len += sizeof(block->compression) + OVERHEAD;
+  if (block->geo0) len += sizeof(block->geo0) + OVERHEAD;
+  if (block->geo1) len += sizeof(block->geo1) + OVERHEAD;
   len += varint_sizeof(block->len);
 #undef OVERHEAD
   return len + block->len;
@@ -291,6 +293,8 @@ ssize_t pf_create_block (uint8_t *dst, pf_block_t *block, const pf_keypair_t pai
     o += sizeof(block->seq);
   }
 
+  // TODO: clarify that de-/compression is always external.
+  // this is just a flag signal decoders
   if (block->compression) {
     dst[o++] = 0;
     dst[o++] = HDR8_COMPRESSION;
@@ -300,9 +304,23 @@ ssize_t pf_create_block (uint8_t *dst, pf_block_t *block, const pf_keypair_t pai
   if (block->date) {
     dst[o++] = 0;
     dst[o++] = HDR64_DATE;
-    pf_write_date(dst + o);
-    // *((uint64_t *)dst + o) = block->date; // TODO: pf_getdate()
+    if (block->date == 1) pf_write_date(dst + o);
+    else *((uint64_t *) &dst[o]) = block->date;
     o += sizeof(block->date);
+  }
+
+  if (block->geo0) {
+    dst[o++] = 0;
+    dst[o++] = HDR64_GEOCODE0;
+    *((uint64_t *) &dst[o]) = block->geo0;
+    o += sizeof(block->geo0);
+  }
+
+  if (block->geo1) {
+    dst[o++] = 0;
+    dst[o++] = HDR64_GEOCODE1;
+    *((uint64_t *) &dst[o]) = block->geo1;
+    o += sizeof(block->geo1);
   }
 
   o += varint_encode(dst + o, block->len);
@@ -454,6 +472,27 @@ int pf_get(const pico_feed_t *feed, pf_block_t *block, int idx) {
   assert(0); // unreachable
 }
 
+// public but @experimental
+ssize_t pf__append_block(pico_feed_t *feed, pf_block_t *block, const pf_keypair_t pair) {
+  pf_block_t last = {0};
+  if (0 == pf_last(feed, &last)) {
+    cpy(block->psig, last.id, sizeof(block->psig));
+    block->seq = last.seq + 1;
+  }
+
+  const size_t b_size = pf_sizeof(block);
+
+  if (b_size > feed->capacity - feed->tail) {
+    grow(feed, feed->tail + b_size);
+  }
+
+  int err = pf_create_block(&feed->buffer[feed->tail], block, pair);
+  if (err != b_size) return err;
+
+  feed->tail += b_size;
+  return feed->tail;
+}
+
 ssize_t pf_append (pico_feed_t *feed, const uint8_t *data, const size_t data_len, const pf_keypair_t pair) {
   // defaults
   pf_block_t block = {
@@ -463,25 +502,7 @@ ssize_t pf_append (pico_feed_t *feed, const uint8_t *data, const size_t data_len
     .len = data_len,
     .body = data
   };
-
-
-  pf_block_t last = {0};
-  if (0 == pf_last(feed, &last)) {
-    cpy(block.psig, last.id, sizeof(block.psig));
-    block.seq = last.seq + 1;
-  }
-
-  const size_t b_size = pf_sizeof(&block);
-
-  if (b_size > feed->capacity - feed->tail) {
-    grow(feed, feed->tail + b_size);
-  }
-
-  int err = pf_create_block(&feed->buffer[feed->tail], &block, pair);
-  if (err != b_size) return err;
-
-  feed->tail += b_size;
-  return feed->tail;
+  return pf__append_block(feed, &block, pair);
 }
 
 void pf_truncate(pico_feed_t *feed, int height) {
@@ -587,8 +608,7 @@ int pf_slice (pico_feed_t *dst, const pico_feed_t *src, int start_idx, int end_i
   return iter.idx - start_idx + 1;
 }
 
-// TODO remove all macros, keep debugger
-#undef debugger
+// TODO remove all macros
 #undef cpy
 #undef cmp
 #undef zro

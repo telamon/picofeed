@@ -1,11 +1,10 @@
 #ifndef PICOFEED_H
 #define PICOFEED_H
-#include <stddef.h>
+
+#include <stdio.h>
+// #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
-// -- remove
-#include <memory.h>
-#include <string.h>
+
 
 #define PiC0 "PiC0"
 #define NWSN "Network Without Super Node"
@@ -48,10 +47,10 @@ typedef enum {
 
   // 16Bit
   HDR16_SEQ = 16,
-  HDR16_MIME,
+  HDR16_CONTENT_TYPE,
+  HDR16_APPLICATION,   // hint of purpose
 
   // 32Bit
-  HDR32_APPLICATION = 32,   // hint of purpose
   HDR32_COLOR = 32,         // rgba - test
 
   // 64Bit
@@ -71,15 +70,19 @@ typedef enum {
   // > 127 Application defined
 } pico_header_t;
 
-// typedef uint64_t pf_vec2;
-// typedef uint64_t pf_vec3;
+// typedef uint64_t pf_vec2_t;
+// typedef uint64_t pf_vec3_t;
 
 typedef struct pf_block_s {
+  // required
   pf_signature_t id;
   pf_signature_t psig;
+  // common
   pf_key_t author;
   uint16_t seq;
   uint64_t date;
+  uint64_t geo0; // source
+  uint64_t geo1; // destination
   // pf_vec2 location2;
   // pf_vec3 location3;
   uint8_t compression;
@@ -188,6 +191,17 @@ int pf_next (const pico_feed_t *feed, pf_iterator_t *iter);
  * @return tail position, -1 on error
  */
 ssize_t pf_append (pico_feed_t *feed, const uint8_t *data, const size_t data_len, const pf_keypair_t pair);
+
+/**
+ * @brief (experimental) Appends to feed semi initialized block structure
+ * correct encodngs must be set,
+ * most elements are overwritten.
+ *
+ * @param feed Writable feed
+ * @param pair author's secret
+ * @return tail position, -1 on error
+ */
+ssize_t pf__append_block (pico_feed_t *feed, pf_block_t *block, const pf_keypair_t pair);
 
 /**
  * @brief Count Blocks in a Feed

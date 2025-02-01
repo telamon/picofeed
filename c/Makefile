@@ -3,6 +3,7 @@ CFLAGS=-Wall -g $(shell pkg-config --cflags monocypher)
 LDFLAGS=$(shell pkg-config --libs monocypher)
 
 TARGET_LIB=picofeed.so
+
 TARGET=test_pico
 SOURCES=test/picofeed_test.c picofeed.c test/log.c
 

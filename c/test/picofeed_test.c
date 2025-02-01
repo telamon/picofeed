@@ -1,10 +1,9 @@
-#include <memory.h>
-#include <strings.h>
+#include "../picofeed.h"
+#include <stdlib.h>
 #include <time.h>
 #include <ctype.h>
+#include <string.h>
 #include <assert.h>
-#include "../picofeed.h"
-#include <stdint.h>
 
 #include "log.h"
 #define PKSTR "%02x%02x%02x%02x..%02x%02x"
