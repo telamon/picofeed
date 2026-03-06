@@ -5,7 +5,7 @@
   "type": "module",
   "main": "index.js",
   "bin": {
-    "pf": "./pf"
+    "pf": "cli.js"
   },
   "files": [
     "index.js",
