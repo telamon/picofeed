@@ -148,6 +148,6 @@ Reworked binary format, less overhead
 -  Added feed slices and merge
 ## License
 
-[AGPL-3.0-or-later](./LICENSE)
+[MPL-2.0](./LICENSE)
 
 2020-2023 &#x1f12f; Tony Ivanov
