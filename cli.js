@@ -5,7 +5,7 @@ import 'fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
-import Feed from '.'
+import { Feed } from './index.js'
 
 function usage (code = 1) {
   const msg = `

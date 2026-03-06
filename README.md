@@ -85,6 +85,8 @@ toHex(remoteFeed.blocks[0].key) === alice.pk // true
 
 ## Changelog
 
+#### `9.0.4`
+- Fix `feed` CLI startup on modern Node ESM resolution (no directory/default import mismatch).
 
 #### `9.0.3`
 - Change license of lib to MPL
