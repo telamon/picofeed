@@ -24,7 +24,7 @@ Imagine git as a jar, then using pliers pull out a branch.
 That single detached branch is synonymous with one picofeed
 _- a memorybuffer containing cryptographically signed blocks:_
 
-This package provides 2 primitves  
+This package provides 2 primitves
 
 **Feed**
 ```
@@ -84,6 +84,11 @@ toHex(remoteFeed.blocks[0].key) === alice.pk // true
 
 
 ## Changelog
+
+
+#### `9.0.3`
+- Change license of lib to MPL
+- Add cli tool `feed` (Should have been done from start.)
 
 #### `8.0.0`
 

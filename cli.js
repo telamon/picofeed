@@ -1,15 +1,11 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /* eslint-disable no-console */
-const fsp = require('node:fs/promises')
-const path = require('node:path')
-const process = require('node:process')
-
-let Feed = null
-try {
-  // Requested primary form.
-  Feed = require('.')
-} catch {}
+import 'fs'
+import fsp from 'node:fs/promises'
+import path from 'node:path'
+import process from 'node:process'
+import Feed from '.'
 
 function usage (code = 1) {
   const msg = `
@@ -40,35 +36,6 @@ usage:
 
 function isHex64 (s) {
   return typeof s === 'string' && /^[a-f0-9]{64}$/i.test(s)
-}
-
-function resolveFeedClass (mod) {
-  if (!mod) return null
-  if (typeof mod === 'function' && typeof mod.signPair === 'function') return mod
-  if (typeof mod.Feed === 'function') return mod.Feed
-  if (mod.default && typeof mod.default === 'function' && typeof mod.default.signPair === 'function') return mod.default
-  if (mod.default && typeof mod.default.Feed === 'function') return mod.default.Feed
-  return null
-}
-
-async function loadFeedClass () {
-  let FeedClass = resolveFeedClass(Feed)
-  if (FeedClass) return FeedClass
-
-  // ESM fallback paths for this workspace.
-  const candidates = [
-    'picofeed',
-    '/xor/pico/picofeed/index.js',
-    path.resolve(__dirname, '../pico/picofeed/index.js')
-  ]
-  for (const c of candidates) {
-    try {
-      const mod = await import(c)
-      FeedClass = resolveFeedClass(mod)
-      if (FeedClass) return FeedClass
-    } catch {}
-  }
-  throw new Error('CannotLoadPicofeed')
 }
 
 async function readSecret (file) {
@@ -112,7 +79,7 @@ function printBlockHeader (i, b) {
   process.stdout.write(`SIZE ${b.size}\n`)
 }
 
-async function cmdGen (args, FeedClass) {
+async function cmdGen (args) {
   let force = false
   let file = null
   for (const a of args) {
@@ -122,7 +89,7 @@ async function cmdGen (args, FeedClass) {
   }
   if (!file) throw new Error('Usage: pf gen [-f] FILE|-')
 
-  const { sk } = FeedClass.signPair()
+  const { sk } = Feed.signPair()
 
   // Special target: "-" writes secret directly to stdout.
   if (file === '-') {
@@ -142,7 +109,7 @@ async function cmdGen (args, FeedClass) {
   process.stdout.write(`${file}\n`)
 }
 
-async function cmdAppend (args, FeedClass) {
+async function cmdAppend (args) {
   if (args.length !== 2 && args.length !== 3) throw new Error('Usage: pf append FEED_FILE SECRET_FILE|(-e ENV_NAME) < input')
   const feedFile = args[0]
 
@@ -164,9 +131,9 @@ async function cmdAppend (args, FeedClass) {
   let feed = null
   try {
     const raw = await fsp.readFile(feedFile)
-    feed = raw.length ? new FeedClass(new Uint8Array(raw)) : new FeedClass()
+    feed = raw.length ? new Feed(new Uint8Array(raw)) : new Feed()
   } catch (err) {
-    if (err && err.code === 'ENOENT') feed = new FeedClass()
+    if (err && err.code === 'ENOENT') feed = new Feed()
     else throw err
   }
 
@@ -178,7 +145,7 @@ async function cmdAppend (args, FeedClass) {
   process.stdout.write(`${feed.length}\n`)
 }
 
-async function cmdGet (args, FeedClass) {
+async function cmdGet (args) {
   let inspect = false
   let headersOnly = false
   while (args.length && /^-/.test(args[0])) {
@@ -196,7 +163,7 @@ async function cmdGet (args, FeedClass) {
   const endRaw = parseIntStrict(endArg, 'End')
 
   const raw = await fsp.readFile(feedFile)
-  const feed = raw.length ? new FeedClass(new Uint8Array(raw)) : new FeedClass()
+  const feed = raw.length ? new Feed(new Uint8Array(raw)) : new Feed()
   const blocks = feed.blocks || []
   const len = blocks.length
   if (!len) return
@@ -224,14 +191,13 @@ async function cmdGet (args, FeedClass) {
 }
 
 async function main () {
-  const FeedClass = await loadFeedClass()
   const [cmd, ...args] = process.argv.slice(2)
   if (!cmd || cmd === '-h' || cmd === '--help') usage(0)
 
   switch (cmd) {
-    case 'gen': return cmdGen(args, FeedClass)
-    case 'append': return cmdAppend(args, FeedClass)
-    case 'get': return cmdGet(args, FeedClass)
+    case 'gen': return cmdGen(args)
+    case 'append': return cmdAppend(args)
+    case 'get': return cmdGet(args)
     default:
       throw new Error(`UnknownCommand: ${cmd}`)
   }
