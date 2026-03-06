@@ -1,10 +1,12 @@
 {
   "name": "picofeed",
-  "version": "8.0.5",
+  "version": "9.0.0",
   "description": "Detached secure feed in a single buffer",
   "type": "module",
   "main": "index.js",
-  "bin": { "pf": "./pf" },
+  "bin": {
+    "pf": "./pf"
+  },
   "files": [
     "index.js",
     "index.d.ts"
