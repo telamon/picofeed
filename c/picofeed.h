@@ -2,17 +2,16 @@
 #define PICOFEED_H
 
 #include <stdio.h>
-// #include <stddef.h>
+#include <stddef.h>
 #include <stdint.h>
+#include <sys/types.h>
 
-
-#define PiC0 "PiC0"
 #define NWSN "Network Without Super Node"
 #define LICENSE "AGPL"
-
 #define _pack __attribute__((packed))
 
-#define BENCH
+#define PiC0 "PIC0"
+#define PICOFEED_MAGIC_SIZE 4
 
 /*---------------- POP-01: IDENTITY ----------------*/
 typedef uint8_t pf_key_t[32];
@@ -30,93 +29,125 @@ typedef union {
  * #define PICO_EXTERN_CRYPTO
  * to disable built-in implementions.
  */
-// #define PICO_EXTERN_CRYPTO
 void pico_crypto_random(uint8_t *buffer, size_t size);
 void pico_crypto_keypair(pf_keypair_t *pair);
-
-// void pico_hash(uint8_t hash[32], const uint8_t *message, int m_len); // Blake2b is fine for embedded systems
-void pico_crypto_sign(pf_signature_t signature, const uint8_t *message, const size_t m_len, const pf_keypair_t pair);
-int pico_crypto_verify(const pf_signature_t signature, const uint8_t *message, const size_t m_len, const uint8_t pk[32]);
+void pico_public_from_secret(pf_key_t pk, const uint8_t seed[32]);
+void pico_crypto_sign(
+  pf_signature_t signature,
+  const uint8_t *message,
+  size_t message_len,
+  pf_keypair_t pair
+);
+int pico_crypto_verify(
+  const pf_signature_t signature,
+  const uint8_t *message,
+  size_t message_len,
+  const pf_key_t pk
+);
 /* end of crypto */
 
-/*---------------- POP-02: BLOCK PRIMITIVE ----------------*/
+typedef uint8_t pf_header_id_t;
+
 typedef enum {
-  // 8Bit
-  HDR8_POP_VERSION = 0,     // invalidates assumptions below if set
-  HDR8_COMPRESSION = 5,
-
-  // 16Bit
-  HDR16_SEQ = 16,
-  HDR16_CONTENT_TYPE,
-  HDR16_APPLICATION,   // hint of purpose
-
-  // 32Bit
-  HDR32_COLOR = 32,         // rgba - test
-
-  // 64Bit
-  HDR64_DATE = 64,
-  HDR64_GEOCODE0,           // vec2(lat, lng) - origin
-  HDR64_GEOCODE1,           // vec2(lat, lng) - destination
-  HDR64_POLAR3D,            // vec3(phi, theta, radius)
-
-  // 256bit
-  HDR256_AUTHOR = 96,
-  HDR256_BOX,
-  HDR256_TO,
-
-  // 512bit
-  HDR512_PARENT = 112       // TODO: repeatable
-
-  // > 127 Application defined
+  HDR_AUTHOR = 1,
+  HDR_PSIG = 2
 } pico_header_t;
 
-// typedef uint64_t pf_vec2_t;
-// typedef uint64_t pf_vec3_t;
+typedef struct {
+  pf_header_id_t id;
+  const void *value;
+} pf_header_t;
 
 typedef struct pf_block_s {
-  // required
   pf_signature_t id;
-  pf_signature_t psig;
-  // common
-  pf_key_t author;
-  uint16_t seq;
-  uint64_t date;
-  uint64_t geo0; // source
-  uint64_t geo1; // destination
-  // pf_vec2 location2;
-  // pf_vec3 location3;
-  uint8_t compression;
-  size_t len;
+  const uint8_t *bytes;
   const uint8_t *body;
+  size_t len;
+  size_t block_size;
+  uint8_t verified;
 } pf_block_t;
+
+typedef struct {
+  const uint8_t *cursor;
+  const uint8_t *end;
+  pf_header_id_t id;
+  const void *value;
+} pf_header_iter_t;
 
 typedef enum {
   EFAILED = -1,
   EUNKHDR = -2,
   EDUPHDR = -3,
-  EVERFAIL = -4
+  EVERFAIL = -4,
+  EBOUNDS = -5
 } pf_decode_error_t;
 
 /**
  * @brief loads bytes into block
  * @return bytes-read or pf_decode_error_t
+ *
+ * Block headers remain in-place inside `bytes`.
+ * Use `pf_header_begin()` / `pf_header_next()` or `pf_block_header()`
+ * to inspect them.
  */
-int pf_decode_block (const uint8_t *bytes, pf_block_t *block, int no_verify);
+int pf_decode_block(const uint8_t *bytes, pf_block_t *block, int no_verify);
 
 /**
- * @brief creates a block segment
- * @param dst expected length > pf_block_len(block);
- * @param block headers and block metadata
+ * @brief Size of encoded header section only
+ * @param headers header vector, may be NULL when nheaders == 0
+ * @return number of bytes required or < 0 on error
+ */
+ssize_t pf_sizeof_headers(const pf_header_t *headers, size_t nheaders);
+
+/**
+ * @brief estimate size required to hold body + headers
+ * @param body_len length of application body
+ * @param headers header vector, may be NULL when nheaders == 0
+ * @return total block size or < 0 on error
+ */
+ssize_t pf_sizeof(size_t body_len, const pf_header_t *headers, size_t nheaders);
+
+/**
+ * @brief creates a v8 block segment
+ * @param dst expected length > pf_sizeof(body_len, headers, nheaders);
+ * @param body application body
+ * @param body_len body size
+ * @param headers header vector, may be NULL when nheaders == 0
+ * @param nheaders number of headers
  * @param pair secret key
- * @return int number of bytes written or <1 on error
+ * @return number of bytes written or < 1 on error
  */
-ssize_t pf_create_block (uint8_t *dst, pf_block_t *block, const pf_keypair_t pair);
+ssize_t pf_create_block(
+  uint8_t *dst,
+  const uint8_t *body,
+  size_t body_len,
+  const pf_header_t *headers,
+  size_t nheaders,
+  pf_keypair_t pair
+);
 
 /**
- * @brief estimate size required to hold data + block info
- * @return size of block header + body
+ * @brief Size of a header value in bytes
+ * @return size or < 0 on unknown/unsupported header id
  */
-ssize_t pf_sizeof (const pf_block_t *block);
+int pf_header_size(pf_header_id_t id);
+
+/**
+ * @brief Initializes header iterator over decoded block
+ */
+void pf_header_begin(pf_header_iter_t *iter, const pf_block_t *block);
+
+/**
+ * @brief Iterates over block headers without copying them
+ * @return 0 while headers remain, 1 when done, < 0 on parse error
+ */
+int pf_header_next(pf_header_iter_t *iter);
+
+/**
+ * @brief Finds a header value by id
+ * @return pointer to header value or NULL when not present
+ */
+const void *pf_block_header(const pf_block_t *block, pf_header_id_t id);
 
 /**
  * @brief Fast Iterator
@@ -124,13 +155,9 @@ ssize_t pf_sizeof (const pf_block_t *block);
  *
  * @return offset of next block or pf_decode_error_t
  */
-ssize_t pf_next_block_offset (const uint8_t *buffer);
+ssize_t pf_next_block_offset(const uint8_t *buffer);
 
 /* --------------- POP-0201 Feed ---------------*/
-/**
- * Designed to mimic JS-api, caution: allocates memory
- */
-
 typedef struct {
   size_t tail;
   size_t capacity;
@@ -143,27 +170,18 @@ typedef struct {
  * @brief Initializes a writable feed
  *
  * Allocates memory which must be released
- * using pf_deinit();
+ * using `pf_deinit()`.
  *
- * @param feed pointer to mutable feed struct
- * @return error code
+ * V8 feeds reserve the first four bytes for the `PIC0` magic.
  */
-void pf_init (pico_feed_t *feed);
-
-/**
- * @brief Load or copies feed from buffer
- *
- * @param bytes buffer containing a feed
- * @param clone */
-// int pf_from (pico_feed_t *feed, const uint8_t *bytes, size_t *len);
+void pf_init(pico_feed_t *feed);
 
 /**
  * @brief Deinitalizes a writable feed
  * Frees all dynamically allocated resources
- * by `pico_feed_init()`
- * @param feed Writable feed
+ * by `pf_init()`.
  */
-void pf_deinit (pico_feed_t *feed);
+void pf_deinit(pico_feed_t *feed);
 
 typedef struct pf_iterator_s {
   int idx;
@@ -176,57 +194,57 @@ typedef struct pf_iterator_s {
  * @brief Iterates through all blocks in buffer
  * @return error = -1, has_more = 0, done = 1
  */
-int pf_next (const pico_feed_t *feed, pf_iterator_t *iter);
+int pf_next(const pico_feed_t *feed, pf_iterator_t *iter);
 
 /**
  * @brief Appends block to a writable feed
  *
- * Appends data, and signs off with secret key.
- * This function invalidates all references to internal buffer.
+ * Appends a block body plus optional headers to a writable feed.
+ * `HDR_AUTHOR` is always taken from `pair.pk`.
+ * If `HDR_PSIG` is not supplied and the feed is non-empty,
+ * the current tail block id is used automatically.
  *
  * @param feed Writable feed
- * @param data Application data
- * @param data_len Length of data
+ * @param body Application data
+ * @param body_len Length of data
+ * @param headers extra headers, may be NULL when nheaders == 0
+ * @param nheaders number of headers
  * @param pair author's secret
- * @return tail position, -1 on error
+ * @return new block height, -1 on error
  */
-ssize_t pf_append (pico_feed_t *feed, const uint8_t *data, const size_t data_len, const pf_keypair_t pair);
-
-/**
- * @brief (experimental) Appends to feed semi initialized block structure
- * correct encodngs must be set,
- * most elements are overwritten.
- *
- * @param feed Writable feed
- * @param pair author's secret
- * @return tail position, -1 on error
- */
-ssize_t pf__append_block (pico_feed_t *feed, pf_block_t *block, const pf_keypair_t pair);
+ssize_t pf_append(
+  pico_feed_t *feed,
+  const uint8_t *body,
+  size_t body_len,
+  const pf_header_t *headers,
+  size_t nheaders,
+  pf_keypair_t pair
+);
 
 /**
  * @brief Count Blocks in a Feed
  * @return block height
  */
-int pf_len (const pico_feed_t *feed);
+int pf_len(const pico_feed_t *feed);
 
 /**
  * @brief Remove blocks
- * @param len
- * @return new block height
+ * @param len negative values wrap from end
  */
-void pf_truncate (pico_feed_t *feed, int len);
+void pf_truncate(pico_feed_t *feed, int len);
+
 /**
  * @brief Get block at index
  * @param block destination
- * @param n index
+ * @param idx index, negative wraps from feed.end
  */
-int pf_get(const pico_feed_t *feed, pf_block_t *block, int n);
+int pf_get(const pico_feed_t *feed, pf_block_t *block, int idx);
 
 /**
  * @brief Get last block on feed
- * @return length of feed
+ * @return 0 when found, < 0 on empty/error
  */
-// int pf_last (const pico_feed_t *feed, pf_block_t *block);
+int pf_last(const pico_feed_t *feed, pf_block_t *block);
 
 typedef enum {
   OK = 0,
@@ -239,58 +257,30 @@ typedef enum {
  * @param out 0 when equal, positive block count when B is ahead, negative when B is behind.
  * @return error
  */
-pf_diff_error_t pf_diff (const pico_feed_t *a, const pico_feed_t *b, int *out);
+pf_diff_error_t pf_diff(const pico_feed_t *a, const pico_feed_t *b, int *out);
 
 /**
  * @brief Creates a copy
  *
  * Allocates memory which must be released
- * using pf_deinit();
+ * using `pf_deinit()`.
  *
  * @param dst empty struct, do not pass an already initialized feed.
  */
-void pf_clone (pico_feed_t *dst, const pico_feed_t *src);
+void pf_clone(pico_feed_t *dst, const pico_feed_t *src);
 
 /**
  * @brief Copies sub range of blocks
- * @param dst target uninitalized feed
+ * @param dst target feed, may be initialized or empty
  * @param src feed to copy from
- * @param start_id inclusive, negative wraps from src.end
+ * @param start_idx inclusive, negative wraps from src.end
  * @param end_idx exclusive, negative wraps from src.end
  * @return number of blocks copied, value < 0 indicates error
  */
-int pf_slice (pico_feed_t *dst, const pico_feed_t *src, int start_idx, int end_idx);
-
-/* ---------------- POP-08 Time ----------------*/
-/* V7 - Experimental */ // this is a painfully bad idea
-#define BEGINNING_OF_TIME 1577836800
-#define UINT40_MASK 0xFFFFFFFFFFLLU
-
-// typedef struct pf_date_s pf_date_t;
-/**
- * @brief Truncated UTC timestamp
- *
- * Generates a timestamp in resolution 1/100 (hundreth of a second)
- * occupying a maximum of 40bits (5 octets).
- * Motivation: pico was invented in beginning of 2020,
- * no blocks were generated before that year.
- *
- * @return pico block timestamp
- */
-uint64_t pico_now (void);
-
-/**
- * @brief Decode pico-hundreds to epoch-millis
- */
-#define pf_date_utc(pf40bit_time) ((pf40bit_time) + BEGINNING_OF_TIME * 100LLU) * 10LLU
-#define pf_utc_to_pop8(utc_time) (((utc_time) / 10LLU) - (BEGINNING_OF_TIME * 100LLU))
-/**
- * @brief Parses block "date" fields
- */
-uint64_t pf_read_utc (const uint8_t src[5]);
+int pf_slice(pico_feed_t *dst, const pico_feed_t *src, int start_idx, int end_idx);
 
 #ifdef BENCH
-void dump_stats ();
+void dump_stats(void);
 #endif
 
 #endif

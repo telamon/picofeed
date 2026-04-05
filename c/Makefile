@@ -1,5 +1,13 @@
 CC=clang
-CFLAGS=-Wall -g $(shell pkg-config --cflags monocypher)
+BENCH_CFLAGS:=
+ifneq ($(BENCH),)
+BENCH_CFLAGS+=-DBENCH
+endif
+ifeq ($(BENCH_CFLAGS),)
+BENCH_CFLAGS+=$(shell grep -Eq '^#define[[:space:]]+BENCH$$' test/picofeed_test.c && echo -DBENCH)
+endif
+
+CFLAGS=-Wall -g $(BENCH_CFLAGS) $(shell pkg-config --cflags monocypher)
 LDFLAGS=$(shell pkg-config --libs monocypher)
 
 TARGET_LIB=picofeed.so
