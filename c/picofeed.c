@@ -501,6 +501,51 @@ append_block(
   return pf_len(feed);
 }
 
+static ssize_t
+merge_append_headers(
+  const pico_feed_t *feed,
+  const pf_header_t *headers,
+  size_t nheaders,
+  pf_header_t *merged,
+  pf_block_t *last
+) {
+  int has_psig = 0;
+  size_t j = 1;
+
+  if (headers == NULL && nheaders != 0) return PF_EFAILED;
+
+  merged[0].id = HDR_AUTHOR;
+  merged[0].value = NULL;
+
+  for (size_t i = 0; i < nheaders; ++i) {
+    if (headers[i].id == HDR_AUTHOR) continue;
+    if (headers[i].id == HDR_PSIG) has_psig = 1;
+    merged[j++] = headers[i];
+  }
+
+  if (!has_psig && 0 == pf_last(feed, last)) {
+    merged[j].id = HDR_PSIG;
+    merged[j].value = last->id;
+    ++j;
+  }
+
+  return (ssize_t)j;
+}
+
+ssize_t
+pf_append_sizeof(
+  const pico_feed_t *feed,
+  size_t body_len,
+  const pf_header_t *headers,
+  size_t nheaders
+) {
+  pf_block_t last = {0};
+  pf_header_t merged[nheaders + 2];
+  ssize_t merged_len = merge_append_headers(feed, headers, nheaders, merged, &last);
+  if (merged_len < 0) return merged_len;
+  return pf_sizeof(body_len, merged, (size_t)merged_len);
+}
+
 ssize_t
 pf_append(
   pico_feed_t *feed,
@@ -511,39 +556,10 @@ pf_append(
   const pf_keypair_t pair
 ) {
   pf_block_t last = {0};
-  int has_psig = 0;
-  size_t merged_len = 1;
-  size_t i;
-  size_t j;
-
-  if (headers == NULL && nheaders != 0) return PF_EFAILED;
-
-  for (i = 0; i < nheaders; ++i) {
-    if (headers[i].id == HDR_AUTHOR) continue;
-    if (headers[i].id == HDR_PSIG) has_psig = 1;
-    ++merged_len;
-  }
-
-  if (!has_psig && 0 == pf_last(feed, &last)) ++merged_len;
-
-  pf_header_t merged[merged_len];
-  merged[0].id = HDR_AUTHOR;
-  merged[0].value = NULL;
-  j = 1;
-
-  for (i = 0; i < nheaders; ++i) {
-    if (headers[i].id == HDR_AUTHOR) continue;
-    merged[j++] = headers[i];
-  }
-
-  if (!has_psig && last.block_size) {
-    merged[j].id = HDR_PSIG;
-    merged[j].value = last.id;
-    ++j;
-  }
-
-  assert(j == merged_len);
-  return append_block(feed, body, body_len, merged, merged_len, pair);
+  pf_header_t merged[nheaders + 2];
+  ssize_t merged_len = merge_append_headers(feed, headers, nheaders, merged, &last);
+  if (merged_len < 0) return merged_len;
+  return append_block(feed, body, body_len, merged, (size_t)merged_len, pair);
 }
 
 void

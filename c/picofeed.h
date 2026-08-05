@@ -170,7 +170,7 @@ typedef struct {
 } pico_feed_t;
 
 /**
- * @brief Initializes a writable feed over caller-owned memory
+ * @brief Initializes a writable feed over a caller-owned buffer
  *
  * Writes the `PIC0` magic into `bytes`, sets feed tail to the first
  * writable offset, and never allocates.
@@ -182,7 +182,7 @@ int pf_init(pico_feed_t *feed, uint8_t *bytes, size_t len);
 /**
  * @brief Clears a feed handle
  *
- * Does not free or modify caller-owned feed memory.
+ * Does not free or modify the caller-owned feed buffer.
  */
 void pf_deinit(pico_feed_t *feed);
 
@@ -198,6 +198,21 @@ typedef struct pf_iterator_s {
  * @return error = -1, has_more = 0, done = 1
  */
 int pf_next(const pico_feed_t *feed, pf_iterator_t *iter);
+
+/**
+ * @brief Returns encoded bytes required by the next append
+ *
+ * Includes the implicit `HDR_AUTHOR` header and the implicit `HDR_PSIG`
+ * header when the feed is non-empty. Does not include existing feed bytes.
+ *
+ * @return encoded block size or pf_error_t
+ */
+ssize_t pf_append_sizeof(
+  const pico_feed_t *feed,
+  size_t body_len,
+  const pf_header_t *headers,
+  size_t nheaders
+);
 
 /**
  * @brief Appends block to a writable feed
@@ -263,7 +278,7 @@ typedef enum {
 pf_diff_error_t pf_diff(const pico_feed_t *a, const pico_feed_t *b, int *out);
 
 /**
- * @brief Copies a feed into preallocated destination memory
+ * @brief Copies a feed into a preallocated destination buffer
  *
  * Destination must already be initialized with `pf_init()`.
  *

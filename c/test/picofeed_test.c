@@ -24,9 +24,9 @@
 #define OK0(exp) OK(exp, ".")
 
 #define TEST_FEED_BYTES 65536
-#define INIT_FEED(feed, storage) do { \
-  memset((storage), 0, sizeof(storage)); \
-  assert(0 == pf_init((feed), (storage), sizeof(storage))); \
+#define INIT_FEED(feed, feed_buffer) do { \
+  memset((feed_buffer), 0, sizeof(feed_buffer)); \
+  assert(0 == pf_init((feed), (feed_buffer), sizeof(feed_buffer))); \
 } while (0)
 
 #define APPEND0(feed, data, data_len, pair) \
@@ -320,7 +320,7 @@ test_pop0201_feed(void) {
 }
 
 static int
-test_pop0201_static_storage_limits(void) {
+test_pop0201_static_buffer_limits(void) {
   pf_keypair_t pair = {0};
   pico_crypto_keypair(&pair);
 
@@ -328,7 +328,7 @@ test_pop0201_static_storage_limits(void) {
   uint8_t tiny_bytes[96];
   INIT_FEED(&tiny, tiny_bytes);
 
-  OK(PF_ENOSPC == APPEND0(&tiny, "tiny", 4, pair), "append fails when caller storage is full");
+  OK(PF_ENOSPC == APPEND0(&tiny, "tiny", 4, pair), "append fails when caller buffer is full");
   OK(tiny.tail == PICOFEED_MAGIC_SIZE, "failed append leaves tail unchanged");
 
   pico_feed_t src = {0};
@@ -339,12 +339,41 @@ test_pop0201_static_storage_limits(void) {
   INIT_FEED(&dst, dst_bytes);
 
   OK(1 == APPEND0(&src, "full block", 10, pair), "source block appended");
-  OK(PF_ENOSPC == pf_clone(&dst, &src), "clone fails when destination storage is too small");
-  OK(PF_ENOSPC == pf_slice(&dst, &src, 0, 1), "slice fails when destination storage is too small");
+  OK(PF_ENOSPC == pf_clone(&dst, &src), "clone fails when destination buffer is too small");
+  OK(PF_ENOSPC == pf_slice(&dst, &src, 0, 1), "slice fails when destination buffer is too small");
 
   pf_deinit(&dst);
   pf_deinit(&src);
   pf_deinit(&tiny);
+  return 0;
+}
+
+static int
+test_pop0201_append_sizeof(void) {
+  pf_keypair_t pair = {0};
+  pico_crypto_keypair(&pair);
+
+  pico_feed_t feed = {0};
+  uint8_t feed_bytes[TEST_FEED_BYTES];
+  INIT_FEED(&feed, feed_bytes);
+
+  uint64_t date = 1;
+  pf_header_t headers[] = {
+    { APPHDR_DATE, &date }
+  };
+  const uint8_t body[] = "sized";
+
+  ssize_t block_size = pf_append_sizeof(&feed, sizeof(body) - 1, headers, 1);
+  size_t tail = feed.tail;
+  OK(1 == pf_append(&feed, body, sizeof(body) - 1, headers, 1, pair), "sized genesis appended");
+  OK(block_size == (ssize_t)(feed.tail - tail), "genesis append size predicted");
+
+  block_size = pf_append_sizeof(&feed, sizeof(body) - 1, headers, 1);
+  tail = feed.tail;
+  OK(2 == pf_append(&feed, body, sizeof(body) - 1, headers, 1, pair), "sized child appended");
+  OK(block_size == (ssize_t)(feed.tail - tail), "child append size includes parent signature");
+
+  pf_deinit(&feed);
   return 0;
 }
 
@@ -595,7 +624,8 @@ main(void) {
   run_test(test_pop02_blocksegment);
   run_test(test_pop02_dynamic_headers);
   run_test(test_pop0201_feed);
-  run_test(test_pop0201_static_storage_limits);
+  run_test(test_pop0201_static_buffer_limits);
+  run_test(test_pop0201_append_sizeof);
   run_test(test_pop0201_feed_diff);
   run_test(test_pop0201_feed_slice);
   run_test(test_pop02_fast_iterator);
