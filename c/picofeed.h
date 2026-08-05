@@ -12,6 +12,7 @@
 
 #define PiC0 "PIC0"
 #define PICOFEED_MAGIC_SIZE 4
+#define PICOFEED_MAX_BYTES (512ULL * 1024ULL * 1024ULL)
 
 /*---------------- POP-01: IDENTITY ----------------*/
 typedef uint8_t pf_key_t[32];
@@ -75,16 +76,18 @@ typedef struct {
 } pf_header_iter_t;
 
 typedef enum {
-  EFAILED = -1,
-  EUNKHDR = -2,
-  EDUPHDR = -3,
-  EVERFAIL = -4,
-  EBOUNDS = -5
-} pf_decode_error_t;
+  PF_OK = 0,
+  PF_EFAILED = -1,
+  PF_EUNKNOWN_HEADER = -2,
+  PF_EDUPLICATE_HEADER = -3,
+  PF_EVERIFY = -4,
+  PF_EBOUNDS = -5,
+  PF_ENOSPC = -6
+} pf_error_t;
 
 /**
  * @brief loads bytes into block
- * @return bytes-read or pf_decode_error_t
+ * @return bytes-read or pf_error_t
  *
  * Block headers remain in-place inside `bytes`.
  * Use `pf_header_begin()` / `pf_header_next()` or `pf_block_header()`
@@ -153,33 +156,33 @@ const void *pf_block_header(const pf_block_t *block, pf_header_id_t id);
  * @brief Fast Iterator
  * Does not load data nor verify signatures.
  *
- * @return offset of next block or pf_decode_error_t
+ * @return offset of next block or pf_error_t
  */
 ssize_t pf_next_block_offset(const uint8_t *buffer);
 
 /* --------------- POP-0201 Feed ---------------*/
 typedef struct {
   size_t tail;
-  size_t capacity;
+  size_t len;
   uint32_t flags;
   uint8_t reserved[8];
   uint8_t *buffer;
 } pico_feed_t;
 
 /**
- * @brief Initializes a writable feed
+ * @brief Initializes a writable feed over caller-owned memory
  *
- * Allocates memory which must be released
- * using `pf_deinit()`.
+ * Writes the `PIC0` magic into `bytes`, sets feed tail to the first
+ * writable offset, and never allocates.
  *
- * V8 feeds reserve the first four bytes for the `PIC0` magic.
+ * V9 feeds reserve the first four bytes for the `PIC0` magic.
  */
-void pf_init(pico_feed_t *feed);
+int pf_init(pico_feed_t *feed, uint8_t *bytes, size_t len);
 
 /**
- * @brief Deinitalizes a writable feed
- * Frees all dynamically allocated resources
- * by `pf_init()`.
+ * @brief Clears a feed handle
+ *
+ * Does not free or modify caller-owned feed memory.
  */
 void pf_deinit(pico_feed_t *feed);
 
@@ -260,18 +263,17 @@ typedef enum {
 pf_diff_error_t pf_diff(const pico_feed_t *a, const pico_feed_t *b, int *out);
 
 /**
- * @brief Creates a copy
+ * @brief Copies a feed into preallocated destination memory
  *
- * Allocates memory which must be released
- * using `pf_deinit()`.
+ * Destination must already be initialized with `pf_init()`.
  *
- * @param dst empty struct, do not pass an already initialized feed.
+ * @return bytes copied or < 0 on error
  */
-void pf_clone(pico_feed_t *dst, const pico_feed_t *src);
+ssize_t pf_clone(pico_feed_t *dst, const pico_feed_t *src);
 
 /**
  * @brief Copies sub range of blocks
- * @param dst target feed, may be initialized or empty
+ * @param dst initialized target feed
  * @param src feed to copy from
  * @param start_idx inclusive, negative wraps from src.end
  * @param end_idx exclusive, negative wraps from src.end

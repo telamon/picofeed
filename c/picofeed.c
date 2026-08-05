@@ -1,7 +1,6 @@
 #include "picofeed.h"
 
 #include <assert.h>
-#include <stdlib.h>
 #include <string.h>
 
 #define error_check(err) assert(0 == (err))
@@ -10,9 +9,6 @@
 #define cpy(dst, src, size) memcpy((dst), (src), (size))
 #define zro(ptr, size) memset((ptr), 0x0, (size))
 #define cmp(a, b, size) memcmp((a), (b), (size))
-#define ualloc(n) malloc((n))
-#define salloc(t, n) calloc((t), (n))
-#define ralloc(ptr, n) realloc((ptr), (n))
 #else
 static struct stats_s {
   int cpy;
@@ -23,12 +19,6 @@ static struct stats_s {
 
   int zro;
   size_t zro_bytes;
-
-  int malloc;
-  size_t malloc_bytes;
-
-  int rlc;
-  size_t rlc_bytes;
 
   int verify;
   int pf_next;
@@ -46,10 +36,6 @@ static struct stats_s {
   stats.zro_bytes += (size); \
 } while (0)
 
-#define ualloc(n) (stats.malloc++, stats.malloc_bytes += (n), malloc((n)))
-#define salloc(t, n) (stats.malloc++, stats.malloc_bytes += ((t) * (n)), calloc((t), (n)))
-#define ralloc(ptr, n) (stats.rlc++, stats.rlc_bytes += (n), realloc((ptr), (n)))
-
 static inline int
 cmp(const void *a, const void *b, size_t n) {
   stats.cmp++;
@@ -63,8 +49,6 @@ dump_stats(void) {
   printf("CPY \t%i \t%zu B\n", stats.cpy, stats.cpy_bytes);
   printf("ZRO \t%i \t%zu B\n", stats.zro, stats.zro_bytes);
   printf("CMP \t%i \t%zu B\n", stats.cmp, stats.cmp_bytes);
-  printf("ALC \t%i \t%zu B\n", stats.malloc, stats.malloc_bytes);
-  printf("RLC \t%i \t%zu B\n", stats.rlc, stats.rlc_bytes);
   printf("VER \t%i \t%i B\n", stats.verify, 0);
   printf("NXT \t%i \t%i B\n", stats.pf_next, 0);
 }
@@ -198,14 +182,14 @@ int
 pf_header_size(pf_header_id_t id) {
   if (id == HDR_AUTHOR) return (int)sizeof(pf_key_t);
   if (id == HDR_PSIG) return (int)sizeof(pf_signature_t);
-  if (id == 0) return EUNKHDR;
+  if (id == 0) return PF_EUNKNOWN_HEADER;
   if (id < _HDR_U16) return (int)sizeof(uint8_t);
   if (id < _HDR_U32) return (int)sizeof(uint16_t);
   if (id < _HDR_U64) return (int)sizeof(uint32_t);
   if (id < _HDR_B32) return (int)sizeof(uint64_t);
   if (id < _HDR_B64) return 32;
   if (id < _HDR_MAX) return 64;
-  return EUNKHDR;
+  return PF_EUNKNOWN_HEADER;
 }
 
 void
@@ -224,14 +208,14 @@ int
 pf_header_next(pf_header_iter_t *iter) {
   if (iter == NULL || iter->cursor == NULL || iter->end == NULL) return 1;
   if (iter->cursor >= iter->end || iter->cursor[0] != 0) return 1;
-  if (iter->cursor + PF_HDR_PREFIX_SIZE > iter->end) return EFAILED;
+  if (iter->cursor + PF_HDR_PREFIX_SIZE > iter->end) return PF_EFAILED;
 
   pf_header_id_t id = iter->cursor[1];
   int n = pf_header_size(id);
   if (n < 0) return n;
 
   iter->cursor += PF_HDR_PREFIX_SIZE;
-  if (iter->cursor + n > iter->end) return EFAILED;
+  if (iter->cursor + n > iter->end) return PF_EFAILED;
 
   iter->id = id;
   iter->value = iter->cursor;
@@ -260,27 +244,27 @@ pf_decode_block(const uint8_t *bytes, pf_block_t *block, int no_verify) {
 
   size_t data_size = 0;
   int vo = varint_decode(bytes + sizeof(pf_signature_t), &data_size);
-  if (vo <= 0) return EFAILED;
+  if (vo <= 0) return PF_EFAILED;
 
   size_t o = sizeof(pf_signature_t) + (size_t)vo;
   size_t end = o + data_size;
-  if (end < o) return EFAILED;
+  if (end < o) return PF_EFAILED;
 
   while (o < end && bytes[o] == 0) {
     pf_header_id_t id;
     int n;
-    if (o + PF_HDR_PREFIX_SIZE > end) return EFAILED;
+    if (o + PF_HDR_PREFIX_SIZE > end) return PF_EFAILED;
 
     id = bytes[o + 1];
     n = pf_header_size(id);
     if (n < 0) return n;
-    if (id < _HDR_MAX && headers_set[id]++) return EDUPHDR;
+    if (id < _HDR_MAX && headers_set[id]++) return PF_EDUPLICATE_HEADER;
 
     o += PF_HDR_PREFIX_SIZE + (size_t)n;
-    if (o > end) return EFAILED;
+    if (o > end) return PF_EFAILED;
   }
 
-  if (o > end) return EFAILED;
+  if (o > end) return PF_EFAILED;
 
   block->body = bytes + o;
   block->len = end - o;
@@ -288,13 +272,13 @@ pf_decode_block(const uint8_t *bytes, pf_block_t *block, int no_verify) {
 
   if (!no_verify) {
     const pf_key_t *author = pf_block_header(block, HDR_AUTHOR);
-    if (author == NULL) return EVERFAIL;
+    if (author == NULL) return PF_EVERIFY;
     if (0 != pico_crypto_verify(
       block->id,
       bytes + sizeof(pf_signature_t),
       block->block_size - sizeof(pf_signature_t),
       *author
-    )) return EVERFAIL;
+    )) return PF_EVERIFY;
     block->verified = 1;
   }
 
@@ -306,13 +290,13 @@ pf_sizeof_headers(const pf_header_t *headers, size_t nheaders) {
   uint8_t headers_set[_HDR_MAX] = {0};
   ssize_t size = 0;
 
-  if (headers == NULL) return nheaders ? EFAILED : 0;
+  if (headers == NULL) return nheaders ? PF_EFAILED : 0;
 
   for (size_t i = 0; i < nheaders; ++i) {
     int n = pf_header_size(headers[i].id);
     if (n < 0) return n;
-    if (headers[i].id < _HDR_MAX && headers_set[headers[i].id]++) return EDUPHDR;
-    if (headers[i].id != HDR_AUTHOR && headers[i].value == NULL) return EFAILED;
+    if (headers[i].id < _HDR_MAX && headers_set[headers[i].id]++) return PF_EDUPLICATE_HEADER;
+    if (headers[i].id != HDR_AUTHOR && headers[i].value == NULL) return PF_EFAILED;
     size += PF_HDR_PREFIX_SIZE + n;
   }
 
@@ -322,7 +306,7 @@ pf_sizeof_headers(const pf_header_t *headers, size_t nheaders) {
 ssize_t
 pf_sizeof(size_t body_len, const pf_header_t *headers, size_t nheaders) {
   ssize_t headers_size;
-  if (body_len == 0) return EFAILED;
+  if (body_len == 0) return PF_EFAILED;
 
   headers_size = pf_sizeof_headers(headers, nheaders);
   if (headers_size < 0) return headers_size;
@@ -345,8 +329,8 @@ pf_create_block(
   size_t data_size;
   size_t o = sizeof(pf_signature_t);
 
-  if (body == NULL || body_len == 0) return EFAILED;
-  if (body[0] == 0) return EFAILED;
+  if (body == NULL || body_len == 0) return PF_EFAILED;
+  if (body[0] == 0) return PF_EFAILED;
 
   ensure_pair_pk(&pair);
   block_size = pf_sizeof(body_len, headers, nheaders);
@@ -383,7 +367,7 @@ ssize_t
 pf_next_block_offset(const uint8_t *buffer) {
   size_t data_size = 0;
   int vo = varint_decode(buffer + sizeof(pf_signature_t), &data_size);
-  if (vo <= 0) return EFAILED;
+  if (vo <= 0) return PF_EFAILED;
   return sizeof(pf_signature_t) + vo + data_size;
 }
 
@@ -397,38 +381,30 @@ block_psig(const pf_block_t *block) {
   return psig == NULL ? &PF_ZERO_SIG : psig;
 }
 
-#define PICOFEED_DEFAULT_CAPACITY 2048
-
 static inline void
 ensure_magic(const pico_feed_t *feed) {
   assert(feed != NULL);
   assert(feed->buffer != NULL);
   assert(feed->tail >= PICOFEED_MAGIC_SIZE);
+  assert(feed->tail <= feed->len);
   assert(0 == cmp(feed->buffer, PiC0, PICOFEED_MAGIC_SIZE));
 }
 
-static inline void
-grow(pico_feed_t *feed, size_t min_capacity) {
-  size_t capacity = feed->capacity ? feed->capacity : PICOFEED_DEFAULT_CAPACITY;
-  while (capacity < min_capacity) capacity <<= 1;
-  feed->buffer = ralloc(feed->buffer, capacity);
-  assert(feed->buffer != NULL);
-  feed->capacity = capacity;
-}
+int
+pf_init(pico_feed_t *feed, uint8_t *bytes, size_t len) {
+  if (len < PICOFEED_MAGIC_SIZE) return PF_EBOUNDS;
+  if (len > PICOFEED_MAX_BYTES) return PF_EBOUNDS;
 
-void
-pf_init(pico_feed_t *feed) {
   zro(feed, sizeof(*feed));
-  feed->capacity = PICOFEED_DEFAULT_CAPACITY;
-  feed->buffer = salloc(feed->capacity, 1);
-  assert(feed->buffer != NULL);
+  feed->len = len;
+  feed->buffer = bytes;
   cpy(feed->buffer, PiC0, PICOFEED_MAGIC_SIZE);
   feed->tail = PICOFEED_MAGIC_SIZE;
+  return 0;
 }
 
 void
 pf_deinit(pico_feed_t *feed) {
-  free(feed->buffer);
   zro(feed, sizeof(*feed));
 }
 
@@ -487,7 +463,7 @@ pf_get(const pico_feed_t *feed, pf_block_t *block, int idx) {
 
   int len = pf_len(feed);
   if (idx < 0) idx = len + idx;
-  if (idx < 0 || idx >= len) return EBOUNDS;
+  if (idx < 0 || idx >= len) return PF_EBOUNDS;
 
   pf_iterator_t iter = {0};
   while (0 == pf_next(feed, &iter)) {
@@ -497,7 +473,7 @@ pf_get(const pico_feed_t *feed, pf_block_t *block, int idx) {
     }
   }
 
-  return EBOUNDS;
+  return PF_EBOUNDS;
 }
 
 static ssize_t
@@ -515,9 +491,8 @@ append_block(
   const ssize_t b_size = pf_sizeof(body_len, headers, nheaders);
   if (b_size < 0) return b_size;
 
-  if ((size_t)b_size > feed->capacity - feed->tail) {
-    grow(feed, feed->tail + (size_t)b_size);
-  }
+  if (feed->tail > feed->len) return PF_EBOUNDS;
+  if ((size_t)b_size > feed->len - feed->tail) return PF_ENOSPC;
 
   int err = pf_create_block(&feed->buffer[feed->tail], body, body_len, headers, nheaders, pair);
   if (err != b_size) return err;
@@ -541,7 +516,7 @@ pf_append(
   size_t i;
   size_t j;
 
-  if (headers == NULL && nheaders != 0) return EFAILED;
+  if (headers == NULL && nheaders != 0) return PF_EFAILED;
 
   for (i = 0; i < nheaders; ++i) {
     if (headers[i].id == HDR_AUTHOR) continue;
@@ -600,18 +575,19 @@ pf_truncate(pico_feed_t *feed, int height) {
   assert(0);
 }
 
-void
+ssize_t
 pf_clone(pico_feed_t *dst, const pico_feed_t *src) {
   ensure_magic(src);
-  assert(dst->buffer == NULL);
+  ensure_magic(dst);
 
+  if (src->tail > dst->len) return PF_ENOSPC;
+
+  dst->tail = PICOFEED_MAGIC_SIZE;
+  cpy(dst->buffer, src->buffer, src->tail);
   dst->tail = src->tail;
-  dst->capacity = src->tail;
   dst->flags = src->flags;
-  dst->buffer = ualloc(dst->capacity);
-  assert(dst->buffer != NULL);
-  cpy(dst->buffer, src->buffer, dst->tail);
   cpy(dst->reserved, src->reserved, sizeof(dst->reserved));
+  return (ssize_t)dst->tail;
 }
 
 static int
@@ -638,8 +614,7 @@ block_offset_at(const pico_feed_t *feed, int idx) {
 int
 pf_slice(pico_feed_t *dst, const pico_feed_t *src, int start_idx, int end_idx) {
   ensure_magic(src);
-  if (dst->buffer == NULL) pf_init(dst);
-  else ensure_magic(dst);
+  ensure_magic(dst);
 
   int src_len = pf_len(src);
   start_idx = normalize_index(start_idx, src_len);
@@ -650,10 +625,11 @@ pf_slice(pico_feed_t *dst, const pico_feed_t *src, int start_idx, int end_idx) {
   size_t end = block_offset_at(src, end_idx);
   size_t len = end - start;
 
+  if (PICOFEED_MAGIC_SIZE + len > dst->len) return PF_ENOSPC;
+
   pf_truncate(dst, 0);
   if (!len) return 0;
 
-  if (dst->capacity < PICOFEED_MAGIC_SIZE + len) grow(dst, PICOFEED_MAGIC_SIZE + len);
   cpy(dst->buffer, PiC0, PICOFEED_MAGIC_SIZE);
   cpy(dst->buffer + PICOFEED_MAGIC_SIZE, src->buffer + start, len);
   dst->tail = PICOFEED_MAGIC_SIZE + len;
@@ -712,6 +688,3 @@ pf_diff(const pico_feed_t *a, const pico_feed_t *b, int *out) {
 #undef cpy
 #undef cmp
 #undef zro
-#undef ualloc
-#undef salloc
-#undef ralloc

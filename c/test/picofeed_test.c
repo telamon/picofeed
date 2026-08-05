@@ -23,6 +23,12 @@
 
 #define OK0(exp) OK(exp, ".")
 
+#define TEST_FEED_BYTES 65536
+#define INIT_FEED(feed, storage) do { \
+  memset((storage), 0, sizeof(storage)); \
+  assert(0 == pf_init((feed), (storage), sizeof(storage))); \
+} while (0)
+
 #define APPEND0(feed, data, data_len, pair) \
   pf_append((feed), (const uint8_t *)(data), (data_len), NULL, 0, (pair))
 
@@ -136,7 +142,7 @@ inspect_body(const pico_feed_t *feed) {
 
 static void UNUSED
 inspect(const pico_feed_t *feed) {
-  printf("# FEED cap = %zu, tail = %zu, [flags: %u]\n", feed->capacity, feed->tail, feed->flags);
+  printf("# FEED len = %zu, tail = %zu, [flags: %u]\n", feed->len, feed->tail, feed->flags);
   pf_iterator_t iter = {0};
   int i = 0;
   while (0 == pf_next(feed, &iter)) {
@@ -286,7 +292,8 @@ test_pop0201_feed(void) {
   pico_crypto_keypair(&pair);
 
   pico_feed_t feed = {0};
-  pf_init(&feed);
+  uint8_t feed_bytes[TEST_FEED_BYTES];
+  INIT_FEED(&feed, feed_bytes);
 
   OK(1 == APPEND0(&feed, "Hello World", 11, pair), "M1 appended");
   OK(2 == APPEND0(&feed, "Second block", 12, pair), "M2 appended");
@@ -313,6 +320,35 @@ test_pop0201_feed(void) {
 }
 
 static int
+test_pop0201_static_storage_limits(void) {
+  pf_keypair_t pair = {0};
+  pico_crypto_keypair(&pair);
+
+  pico_feed_t tiny = {0};
+  uint8_t tiny_bytes[96];
+  INIT_FEED(&tiny, tiny_bytes);
+
+  OK(PF_ENOSPC == APPEND0(&tiny, "tiny", 4, pair), "append fails when caller storage is full");
+  OK(tiny.tail == PICOFEED_MAGIC_SIZE, "failed append leaves tail unchanged");
+
+  pico_feed_t src = {0};
+  pico_feed_t dst = {0};
+  uint8_t src_bytes[TEST_FEED_BYTES];
+  uint8_t dst_bytes[96];
+  INIT_FEED(&src, src_bytes);
+  INIT_FEED(&dst, dst_bytes);
+
+  OK(1 == APPEND0(&src, "full block", 10, pair), "source block appended");
+  OK(PF_ENOSPC == pf_clone(&dst, &src), "clone fails when destination storage is too small");
+  OK(PF_ENOSPC == pf_slice(&dst, &src, 0, 1), "slice fails when destination storage is too small");
+
+  pf_deinit(&dst);
+  pf_deinit(&src);
+  pf_deinit(&tiny);
+  return 0;
+}
+
+static int
 test_pop0201_feed_diff(void) {
   pf_keypair_t pair = {0};
   pico_crypto_keypair(&pair);
@@ -320,10 +356,14 @@ test_pop0201_feed_diff(void) {
   pico_feed_t a = {0};
   pico_feed_t b = {0};
   pico_feed_t c = {0};
+  uint8_t a_bytes[TEST_FEED_BYTES];
+  uint8_t b_bytes[TEST_FEED_BYTES];
+  uint8_t c_bytes[TEST_FEED_BYTES];
   int diff = 0;
 
-  pf_init(&a);
-  pf_init(&b);
+  INIT_FEED(&a, a_bytes);
+  INIT_FEED(&b, b_bytes);
+  INIT_FEED(&c, c_bytes);
 
   APPEND0(&a, "hello", 5, pair);
   OK(OK == pf_diff(&a, &b, &diff) && diff == -1, "negative when ahead of other");
@@ -336,7 +376,7 @@ test_pop0201_feed_diff(void) {
   APPEND0(&b, "world", 5, pair);
   OK(DIVERGED == pf_diff(&a, &b, &diff), "diverged post genesis");
 
-  pf_clone(&c, &a);
+  OK(0 < pf_clone(&c, &a), "clone copied");
   OK(0 == memcmp(a.buffer, c.buffer, a.tail), "binary identity");
   OK(OK == pf_diff(&a, &c, &diff) && diff == 0, "0 when equal");
 
@@ -364,10 +404,13 @@ test_pop0201_feed_slice(void) {
 
   pico_feed_t fa = {0};
   pico_feed_t fb = {0};
+  uint8_t fa_bytes[TEST_FEED_BYTES];
+  uint8_t fb_bytes[TEST_FEED_BYTES];
   pf_block_t a = {0};
   pf_block_t b = {0};
 
-  pf_init(&fa);
+  INIT_FEED(&fa, fa_bytes);
+  INIT_FEED(&fb, fb_bytes);
   for (int i = 0; i < 8; i++) {
     pf_append(&fa, (const uint8_t *)msgs[i], strlen(msgs[i]), NULL, 0, pair);
   }
@@ -395,7 +438,8 @@ test_pop02_fast_iterator(void) {
   pico_crypto_keypair(&pair);
 
   pico_feed_t feed = {0};
-  pf_init(&feed);
+  uint8_t feed_bytes[TEST_FEED_BYTES];
+  INIT_FEED(&feed, feed_bytes);
 
   char msg[16];
   for (int i = 0; i < 200; i++) {
@@ -460,7 +504,8 @@ test_js_v8_feed_bytes(void) {
   load_reference_pair(&pair);
 
   pico_feed_t feed = {0};
-  pf_init(&feed);
+  uint8_t feed_bytes[TEST_FEED_BYTES];
+  INIT_FEED(&feed, feed_bytes);
 
   OK(feed.tail == PICOFEED_MAGIC_SIZE, "feed starts after PIC0 prefix");
   OK(0 == memcmp(feed.buffer, PiC0, PICOFEED_MAGIC_SIZE), "feed magic is PIC0");
@@ -485,10 +530,18 @@ test_js_v8_slice_and_truncate(void) {
   pico_feed_t slice_two = {0};
   pico_feed_t clone = {0};
   pico_feed_t trunc = {0};
+  uint8_t feed_bytes[TEST_FEED_BYTES];
+  uint8_t slice_one_two_bytes[TEST_FEED_BYTES];
+  uint8_t slice_two_bytes[TEST_FEED_BYTES];
+  uint8_t clone_bytes[TEST_FEED_BYTES];
+  uint8_t trunc_bytes[TEST_FEED_BYTES];
   pf_block_t block = {0};
   int diff = 0;
 
-  pf_init(&feed);
+  INIT_FEED(&feed, feed_bytes);
+  INIT_FEED(&slice_one_two, slice_one_two_bytes);
+  INIT_FEED(&slice_two, slice_two_bytes);
+  INIT_FEED(&clone, clone_bytes);
   APPEND0(&feed, "zero", 4, pair);
   APPEND0(&feed, "one", 3, pair);
   APPEND0(&feed, "two", 3, pair);
@@ -504,12 +557,12 @@ test_js_v8_slice_and_truncate(void) {
   OK(0 == pf_get(&slice_one_two, &block, 0), "slice block readable");
   OK(expect_body(&block, "one"), "slice begins with block one");
 
-  pf_clone(&clone, &feed);
+  OK(0 < pf_clone(&clone, &feed), "clone copied");
   OK(OK == pf_diff(&feed, &clone, &diff) && diff == 0, "clone is in sync");
   OK(OK == pf_diff(&feed, &slice_one_two, &diff) && diff == 0, "full feed diff tail-slice is 0");
   OK(UNRELATED == pf_diff(&slice_one_two, &feed, &diff), "tail-slice diff full feed is unrelated");
 
-  pf_init(&trunc);
+  INIT_FEED(&trunc, trunc_bytes);
   APPEND0(&trunc, "B0", 2, pair);
   APPEND0(&trunc, "B1", 2, pair);
   APPEND0(&trunc, "B2", 2, pair);
@@ -542,6 +595,7 @@ main(void) {
   run_test(test_pop02_blocksegment);
   run_test(test_pop02_dynamic_headers);
   run_test(test_pop0201_feed);
+  run_test(test_pop0201_static_storage_limits);
   run_test(test_pop0201_feed_diff);
   run_test(test_pop0201_feed_slice);
   run_test(test_pop02_fast_iterator);
