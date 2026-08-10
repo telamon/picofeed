@@ -75,6 +75,9 @@ export const PIC0 = s2b('PIC0')
 // <16 RESERVED KNOWN SIZE HEADERS
 export const HDR_AUTHOR = 1
 export const HDR_PSIG = 2
+export const HDR_DATE = 0x40
+export const HDR_GEO0 = 0x41
+export const HDR_GEO1 = 0x42
 // 32..64 FIXED SIZE HEADERS uint16 values
 // 64..96 FIXED SIZE HEADERS uint32 values
 // >128 APPLICATION DEFINED HEADERS
@@ -99,6 +102,9 @@ function _sizeOfDAT (dataLength, headers = []) {
     switch (type) {
       case HDR_PSIG: dataLength += 2 + 64; break
       case HDR_AUTHOR: dataLength += 2 + 32; break
+      case HDR_DATE:
+      case HDR_GEO0:
+      case HDR_GEO1: dataLength += 2 + 8; break
       default: throw new Error(`UnknownHeaderSize: ${type}: ${hdr}`)
     }
   }
@@ -129,6 +135,12 @@ export function createBlockSegment (buffer, offset = 0, data, sk, headers = []) 
         buffer.set(au8(args[0], 64), o)
         o += 64
         break
+      case HDR_DATE:
+      case HDR_GEO0:
+      case HDR_GEO1:
+        new DataView(buffer.buffer, buffer.byteOffset + o, 8).setBigUint64(0, BigInt(args[0]), true)
+        o += 8
+        break
       default: throw new Error(`UnknownHeader: ${hdr}`)
     }
   }
@@ -152,6 +164,7 @@ export class Block { // BlockMapper
   #bodyOffset = 0
   #key = undefined
   #psig = undefined
+  #headers = new Map()
   /** @type {Uint8Array} */
   buffer = null
   constructor (buffer, offset = 0) {
@@ -178,6 +191,18 @@ export class Block { // BlockMapper
         case HDR_PSIG:
           this.#psig = this.buffer.subarray(this.#bodyOffset, this.#bodyOffset + 64)
           this.#bodyOffset += 64; this.#size -= 64
+          break
+        case HDR_DATE:
+          this.#headers.set('date', new DataView(this.buffer.buffer, this.buffer.byteOffset + this.#bodyOffset, 8).getBigUint64(0, true))
+          this.#bodyOffset += 8; this.#size -= 8
+          break
+        case HDR_GEO0:
+          this.#headers.set('geo0', new DataView(this.buffer.buffer, this.buffer.byteOffset + this.#bodyOffset, 8).getBigUint64(0, true))
+          this.#bodyOffset += 8; this.#size -= 8
+          break
+        case HDR_GEO1:
+          this.#headers.set('geo1', new DataView(this.buffer.buffer, this.buffer.byteOffset + this.#bodyOffset, 8).getBigUint64(0, true))
+          this.#bodyOffset += 8; this.#size -= 8
           break
         // c8 ignore next
         default: throw new Error(`DecodedUnknownHeader: ${type}`)
@@ -218,6 +243,7 @@ export class Block { // BlockMapper
   }
 
   get key () { return this.#key }
+  get headers () { return this.#headers }
   verify (pk = this.#key) {
     if (Feed.__vctr !== -1) ++Feed.__vctr // profile global number of verifications
     const message = this.buffer.subarray(64, this.#blksz)

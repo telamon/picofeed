@@ -14,6 +14,9 @@ import {
   varintDecode,
   HDR_AUTHOR,
   HDR_PSIG,
+  HDR_DATE,
+  HDR_GEO0,
+  HDR_GEO1,
   hexdump
 } from './index.js'
 // shim for test.js and node processes
@@ -56,7 +59,16 @@ test('POP-02 spec, rework version 8', async t => {
   t.is(bm2.verify(pk), true, 'Block2, signature valid')
   t.is(toHex(bm2.key), pk, 'author stored')
   t.is(toHex(bm2.psig), toHex(bm1.sig), 'has parent signature')
-  // TODO: test + implement POP8: HDR_DATE
+  const metadata = createBlockSegment(feed, offset, 'metadata', sk, [
+    HDR_AUTHOR,
+    [HDR_DATE, 42n],
+    [HDR_GEO0, 99n],
+    [HDR_GEO1, 123n]
+  ])
+  const metaBlock = new Block(metadata)
+  t.is(metaBlock.headers.get('date'), 42n, 'date header decoded')
+  t.is(metaBlock.headers.get('geo0'), 99n, 'geo0 header decoded')
+  t.is(metaBlock.headers.get('geo1'), 123n, 'geo1 header decoded')
   const rebase = new Feed()
   rebase.merge(feed.subarray(0, offset))
   // rebase.inspect()

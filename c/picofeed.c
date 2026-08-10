@@ -56,15 +56,18 @@ dump_stats(void) {
 
 /* ---------------- POP-01 Identity ----------------*/
 
-#ifndef PICO_EXTERN_CRYPTO
-#include <monocypher-ed25519.h>
+#ifndef PICO_EXTERN_RANDOM
 #include <sys/random.h>
-
 void
 pico_crypto_random(uint8_t *buffer, size_t size) {
   ssize_t n = getrandom(buffer, size, 0);
   assert(n == (ssize_t)size);
 }
+#endif
+
+
+#ifndef PICO_EXTERN_CRYPTO
+#include <monocypher-ed25519.h>
 
 void
 pico_public_from_secret(pf_key_t pk, const uint8_t seed[32]) {
